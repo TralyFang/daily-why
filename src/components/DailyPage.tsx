@@ -39,6 +39,10 @@ export default function DailyPage() {
             case 1: label = "昨天"; break;
             case 2: label = "前天"; break;
             case 3: label = "3天前"; break;
+            case 4: label = "4天前"; break;
+            case 5: label = "5天前"; break;
+            case 6: label = "6天前"; break;
+            case 7: label = "7天前"; break;
             default: label = `${d.getMonth() + 1}月${d.getDate()}日`; break;
           }
           const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -153,7 +157,7 @@ export default function DailyPage() {
       {/* Footer */}
       <footer className="py-6 text-center">
         <p className="text-xs text-gray-400">
-          内容每天更新 · 仅保留近3天 · 用好奇心点亮每一天
+          内容每天更新 · 仅保留近7天 · 用好奇心点亮每一天
         </p>
       </footer>
     </div>

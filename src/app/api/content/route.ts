@@ -6,7 +6,7 @@ export async function GET(request: Request) {
   const date = searchParams.get("date");
 
   if (!date) {
-    const availableDates = getAvailableDates();
+    const availableDates = await getAvailableDates();
     return NextResponse.json({
       availableDates,
       today: availableDates[0] || null,
@@ -17,7 +17,7 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "日期格式不正确" }, { status: 400 });
   }
 
-  const availableDates = getAvailableDates();
+  const availableDates = await getAvailableDates();
   if (!availableDates.includes(date)) {
     return NextResponse.json(
       { error: "该日期的内容不在可查看范围内", availableDates },
@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     );
   }
 
-  const content = getContentForDate(date);
+  const content = await getContentForDate(date);
   if (!content) {
     return NextResponse.json(
       { error: "该日期暂无内容", date },
