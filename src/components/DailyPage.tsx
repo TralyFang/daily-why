@@ -10,7 +10,50 @@ interface DateInfo {
   weekday: string;
 }
 
+interface ChanceState {
+  date: string;    // which day this state belongs to
+  used: number;    // how many chances used (0-3)
+}
+
 type DirectionLock = "undetermined" | "horizontal" | "vertical";
+
+const MAX_CHANCES = 3;
+const CHANCE_STORAGE_KEY = "daily-why-chances";
+
+function getChanceState(): ChanceState {
+  if (typeof window === "undefined") return { date: "", used: 0 };
+  try {
+    const raw = localStorage.getItem(CHANCE_STORAGE_KEY);
+    if (raw) {
+      const state: ChanceState = JSON.parse(raw);
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      if (state.date === todayStr) return state;
+    }
+  } catch {}
+  // Reset for new day or corrupted data
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  return { date: todayStr, used: 0 };
+}
+
+function saveChanceState(state: ChanceState) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CHANCE_STORAGE_KEY, JSON.stringify(state));
+}
+
+function getSecondsUntilMidnight(): number {
+  const now = new Date();
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  return Math.max(0, Math.floor((midnight.getTime() - now.getTime()) / 1000));
+}
+
+function formatCountdown(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  return `${h}小时${m}分${s}秒`;
+}
 
 export default function DailyPage() {
   const [availableDates, setAvailableDates] = useState<DateInfo[]>([]);
@@ -31,6 +74,29 @@ export default function DailyPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const slideRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const slideWidth = useRef<number>(0);
+
+  // "再来一个" state
+  const [chanceState, setChanceState] = useState<ChanceState>({ date: "", used: 0 });
+  const [extraContent, setExtraContent] = useState<string | null>(null);
+  const [extraLoading, setExtraLoading] = useState<boolean>(false);
+  const [extraError, setExtraError] = useState<string | null>(null);
+  const [showExtraCard, setShowExtraCard] = useState<boolean>(false);
+  const [countdown, setCountdown] = useState<number>(getSecondsUntilMidnight());
+
+  // Initialize chance state from localStorage
+  useEffect(() => {
+    setChanceState(getChanceState());
+  }, []);
+
+  // Countdown timer when chances are used up
+  useEffect(() => {
+    if (chanceState.used >= MAX_CHANCES) {
+      const timer = setInterval(() => {
+        setCountdown(getSecondsUntilMidnight());
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [chanceState.used]);
 
   // Fetch available dates on mount
   useEffect(() => {
@@ -140,7 +206,7 @@ export default function DailyPage() {
   // Update height whenever selectedIndex or content changes
   useLayoutEffect(() => {
     updateContainerHeight();
-  }, [selectedIndex, contentCache, updateContainerHeight]);
+  }, [selectedIndex, contentCache, showExtraCard, updateContainerHeight]);
 
   // Also update on resize
   useEffect(() => {
@@ -156,6 +222,45 @@ export default function DailyPage() {
     setIsDragging(false);
     directionLock.current = "undetermined";
   }, []);
+
+  // --- "再来一个" handler ---
+  const handleExtraClick = async () => {
+    if (chanceState.used >= MAX_CHANCES) return;
+    if (extraLoading) return;
+
+    // Dismiss current extra card if showing
+    setShowExtraCard(false);
+    setExtraContent(null);
+    setExtraError(null);
+
+    const nextSlot = chanceState.used + 1; // slot 1, 2, or 3
+    const todayDate = availableDates[0]?.date || chanceState.date;
+    const extraKey = `${todayDate}-extra-${nextSlot}`;
+
+    setExtraLoading(true);
+    try {
+      const res = await fetch(`/api/content?date=${extraKey}`);
+      const data = await res.json();
+      if (data.content) {
+        setExtraContent(data.content);
+        setShowExtraCard(true);
+        // Update chance state
+        const newState = { date: chanceState.date, used: nextSlot };
+        setChanceState(newState);
+        saveChanceState(newState);
+      } else {
+        setExtraError(data.error || "暂无更多内容");
+      }
+    } catch {
+      setExtraError("加载失败，请重试");
+    } finally {
+      setExtraLoading(false);
+    }
+  };
+
+  const dismissExtra = () => {
+    setShowExtraCard(false);
+  };
 
   // --- Drag / Swipe handlers with direction lock ---
   const handleDragStart = (clientX: number, clientY: number) => {
@@ -234,7 +339,6 @@ export default function DailyPage() {
     const clientX = e.touches[0].clientX;
     const clientY = e.touches[0].clientY;
 
-    // Determine direction first
     const deltaX = Math.abs(clientX - dragStartX.current);
     const deltaY = Math.abs(clientY - dragStartY.current);
 
@@ -246,7 +350,6 @@ export default function DailyPage() {
       }
     }
 
-    // If horizontal, prevent default to stop vertical scroll
     if (directionLock.current === "horizontal") {
       e.preventDefault();
     }
@@ -257,13 +360,12 @@ export default function DailyPage() {
     handleDragEnd();
   };
 
-  // Mouse events (desktop only, no direction conflict)
+  // Mouse events (desktop only)
   const onMouseDown = (e: React.MouseEvent) => {
     handleDragStart(e.clientX, e.clientY);
   };
   const onMouseMove = (e: React.MouseEvent) => {
     if (!isDragging || directionLock.current === "vertical") return;
-    // For mouse, we allow horizontal drag directly
     if (directionLock.current === "undetermined") {
       directionLock.current = "horizontal";
     }
@@ -276,6 +378,10 @@ export default function DailyPage() {
   // Global error state
   const globalError = errorDates["global"];
   const selectedDate = availableDates[selectedIndex]?.date || "";
+
+  // Is the current slide "today"?
+  const isToday = selectedIndex === 0;
+  const remaining = MAX_CHANCES - chanceState.used;
 
   // Carousel offset
   const carouselOffset = -(selectedIndex * slideWidth.current) + translateX;
@@ -387,7 +493,7 @@ export default function DailyPage() {
                       <p className="text-gray-400 text-sm mt-2">新内容每天更新，敬请期待</p>
                     </div>
                   ) : (
-                    <article className="content-card">
+                    <div className="content-card">
                       {/* Date badge */}
                       <div className="bg-brand-500 text-white px-4 py-3 flex items-center justify-between">
                         <span className="font-medium">
@@ -405,7 +511,98 @@ export default function DailyPage() {
                           <p className="text-gray-400 text-center py-8">内容加载中...</p>
                         )}
                       </div>
-                    </article>
+
+                      {/* "再来一个" section — only on today */}
+                      {isToday && index === 0 && (
+                        <div className="px-5 pb-4 border-t border-gray-100 pt-3">
+                          {showExtraCard && extraContent ? (
+                            /* Extra content card (nested inside today's card) */
+                            <div className="extra-card-enter">
+                              <div className="bg-gradient-to-r from-amber-400 to-orange-400 text-white px-4 py-2.5 rounded-xl flex items-center justify-between mb-3 shadow-sm">
+                                <span className="font-medium text-sm">
+                                  再来一个 · 第{chanceState.used}次
+                                </span>
+                                <button
+                                  onClick={dismissExtra}
+                                  className="text-xs bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg transition-colors"
+                                >
+                                  收起
+                                </button>
+                              </div>
+                              <div className="select-text markdown-content">
+                                <MarkdownRenderer content={extraContent} />
+                              </div>
+
+                              {/* Remaining chances indicator */}
+                              <div className="flex items-center justify-center gap-1.5 mt-4 pt-3 border-t border-gray-100">
+                                {[0, 1, 2].map(i => (
+                                  <div
+                                    key={i}
+                                    className={`w-2 h-2 rounded-full transition-colors duration-300 ${
+                                      i < chanceState.used
+                                        ? "bg-gray-300"
+                                        : "bg-brand-500"
+                                    }`}
+                                  />
+                                ))}
+                                <span className="text-xs text-gray-400 ml-1.5">
+                                  还能再来 {remaining} 次
+                                </span>
+                              </div>
+                            </div>
+                          ) : extraError ? (
+                            <div className="text-center py-3">
+                              <p className="text-sm text-gray-500">{extraError}</p>
+                            </div>
+                          ) : chanceState.used >= MAX_CHANCES ? (
+                            /* All chances used up */
+                            <div className="text-center py-3">
+                              <div className="flex items-center justify-center gap-1.5 mb-2">
+                                {[0, 1, 2].map(i => (
+                                  <div key={i} className="w-2 h-2 rounded-full bg-gray-300" />
+                                ))}
+                              </div>
+                              <p className="text-sm text-gray-500 font-medium">明天再来 🌙</p>
+                              <p className="text-xs text-gray-400 mt-1">
+                                {formatCountdown(countdown)}后解锁新机会
+                              </p>
+                            </div>
+                          ) : (
+                            /* "再来一个" button */
+                            <button
+                              onClick={handleExtraClick}
+                              disabled={extraLoading}
+                              className="w-full py-3 rounded-xl font-medium text-sm transition-all duration-200 flex items-center justify-center gap-2
+                                bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 text-amber-700
+                                hover:from-amber-100 hover:to-orange-100 hover:border-amber-300 hover:shadow-sm
+                                active:scale-[0.98]
+                                disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                              {extraLoading ? (
+                                <div className="w-4 h-4 rounded-full border-2 border-amber-300 border-t-amber-600 animate-spin" />
+                              ) : (
+                                <>
+                                  <span className="text-base">🎲</span>
+                                  <span>再来一个为什么？</span>
+                                </>
+                              )}
+                              <div className="flex items-center gap-1 ml-1.5">
+                                {[0, 1, 2].map(i => (
+                                  <div
+                                    key={i}
+                                    className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
+                                      i < chanceState.used
+                                        ? "bg-gray-300"
+                                        : "bg-amber-400"
+                                    }`}
+                                  />
+                                ))}
+                              </div>
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
               );

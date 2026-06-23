@@ -129,14 +129,21 @@
   .empty-state {
     @apply flex flex-col items-center justify-center py-16 text-center;
   }
+
+  /* Extra content card entrance animation */
+  .extra-card-enter {
+    animation: slideUp 350ms cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+  }
 }
 
-/* Swipe hint animation (legacy - no longer used) */
-@keyframes swipeHint {
-  0%, 100% { transform: translateX(0); }
-  50% { transform: translateX(-8px); }
-}
-
-.swipe-hint {
-  animation: swipeHint 2s ease-in-out 3;
+/* Card slide-up animation for "再来一个" content */
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
