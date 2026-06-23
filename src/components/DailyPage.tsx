@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
 import DateTabs from "./DateTabs";
 import MarkdownRenderer from "./MarkdownRenderer";
 
@@ -9,6 +9,8 @@ interface DateInfo {
   label: string;
   weekday: string;
 }
+
+type DirectionLock = "undetermined" | "horizontal" | "vertical";
 
 export default function DailyPage() {
   const [availableDates, setAvailableDates] = useState<DateInfo[]>([]);
@@ -21,10 +23,13 @@ export default function DailyPage() {
   // Swipe state
   const [translateX, setTranslateX] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [containerHeight, setContainerHeight] = useState<number | null>(null);
   const dragStartX = useRef<number>(0);
   const dragStartY = useRef<number>(0);
   const dragDeltaX = useRef<number>(0);
+  const directionLock = useRef<DirectionLock>("undetermined");
   const containerRef = useRef<HTMLDivElement>(null);
+  const slideRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const slideWidth = useRef<number>(0);
 
   // Fetch available dates on mount
@@ -124,48 +129,99 @@ export default function DailyPage() {
     return () => window.removeEventListener("resize", updateWidth);
   }, [datesLoaded]);
 
+  // Update container height to match current slide's content
+  const updateContainerHeight = useCallback(() => {
+    const currentSlide = slideRefs.current.get(selectedIndex);
+    if (currentSlide) {
+      setContainerHeight(currentSlide.scrollHeight);
+    }
+  }, [selectedIndex]);
+
+  // Update height whenever selectedIndex or content changes
+  useLayoutEffect(() => {
+    updateContainerHeight();
+  }, [selectedIndex, contentCache, updateContainerHeight]);
+
+  // Also update on resize
+  useEffect(() => {
+    const onResize = () => updateContainerHeight();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [updateContainerHeight]);
+
   // Navigate to a specific index (from tab click)
   const navigateTo = useCallback((index: number) => {
     setSelectedIndex(index);
     setTranslateX(0);
     setIsDragging(false);
+    directionLock.current = "undetermined";
   }, []);
 
-  // --- Drag / Swipe handlers ---
+  // --- Drag / Swipe handlers with direction lock ---
   const handleDragStart = (clientX: number, clientY: number) => {
     dragStartX.current = clientX;
     dragStartY.current = clientY;
     dragDeltaX.current = 0;
+    directionLock.current = "undetermined";
     setIsDragging(true);
     setTranslateX(0);
   };
 
-  const handleDragMove = (clientX: number) => {
+  const handleDragMove = (clientX: number, clientY: number) => {
     if (!isDragging) return;
-    dragDeltaX.current = clientX - dragStartX.current;
-    // Clamp: can't drag beyond first/last slide
-    if (selectedIndex === 0 && dragDeltaX.current > 0) {
-      dragDeltaX.current = dragDeltaX.current * 0.3; // rubber band effect
+
+    const deltaX = clientX - dragStartX.current;
+    const deltaY = clientY - dragStartY.current;
+
+    // Determine direction if still undetermined
+    if (directionLock.current === "undetermined") {
+      const absDeltaX = Math.abs(deltaX);
+      const absDeltaY = Math.abs(deltaY);
+
+      // Only lock direction after moving at least 8px
+      if (absDeltaX < 8 && absDeltaY < 8) return;
+
+      if (absDeltaX > absDeltaY) {
+        directionLock.current = "horizontal";
+      } else {
+        directionLock.current = "vertical";
+      }
     }
-    if (selectedIndex === availableDates.length - 1 && dragDeltaX.current < 0) {
-      dragDeltaX.current = dragDeltaX.current * 0.3;
+
+    // If locked to vertical, don't handle horizontal swipe at all
+    if (directionLock.current === "vertical") return;
+
+    // Horizontal swipe handling
+    dragDeltaX.current = deltaX;
+    // Clamp: can't drag beyond first/last slide
+    if (selectedIndex === 0 && deltaX > 0) {
+      dragDeltaX.current = deltaX * 0.3; // rubber band effect
+    }
+    if (selectedIndex === availableDates.length - 1 && deltaX < 0) {
+      dragDeltaX.current = deltaX * 0.3;
     }
     setTranslateX(dragDeltaX.current);
   };
 
   const handleDragEnd = () => {
     if (!isDragging) return;
-    setIsDragging(false);
 
-    const threshold = slideWidth.current * 0.2; // 20% of slide width
+    // If direction was vertical, just clean up state, don't navigate
+    if (directionLock.current === "vertical") {
+      setIsDragging(false);
+      directionLock.current = "undetermined";
+      return;
+    }
+
+    setIsDragging(false);
+    directionLock.current = "undetermined";
+
+    const threshold = slideWidth.current * 0.15; // 15% of slide width
     if (dragDeltaX.current < -threshold && selectedIndex < availableDates.length - 1) {
-      // Swipe left → next (older) date
       navigateTo(selectedIndex + 1);
     } else if (dragDeltaX.current > threshold && selectedIndex > 0) {
-      // Swipe right → previous (newer) date
       navigateTo(selectedIndex - 1);
     } else {
-      // Snap back to current
       setTranslateX(0);
     }
   };
@@ -175,25 +231,43 @@ export default function DailyPage() {
     handleDragStart(e.touches[0].clientX, e.touches[0].clientY);
   };
   const onTouchMove = (e: React.TouchEvent) => {
-    // If horizontal movement dominates, prevent vertical scroll
-    const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
-    const deltaY = Math.abs(e.touches[0].clientY - dragStartY.current);
-    if (deltaX > deltaY && deltaX > 10) {
-      e.preventDefault?.();
+    const clientX = e.touches[0].clientX;
+    const clientY = e.touches[0].clientY;
+
+    // Determine direction first
+    const deltaX = Math.abs(clientX - dragStartX.current);
+    const deltaY = Math.abs(clientY - dragStartY.current);
+
+    if (directionLock.current === "undetermined" && (deltaX > 8 || deltaY > 8)) {
+      if (deltaX > deltaY) {
+        directionLock.current = "horizontal";
+      } else {
+        directionLock.current = "vertical";
+      }
     }
-    handleDragMove(e.touches[0].clientX);
+
+    // If horizontal, prevent default to stop vertical scroll
+    if (directionLock.current === "horizontal") {
+      e.preventDefault();
+    }
+
+    handleDragMove(clientX, clientY);
   };
   const onTouchEnd = () => {
     handleDragEnd();
   };
 
-  // Mouse events
+  // Mouse events (desktop only, no direction conflict)
   const onMouseDown = (e: React.MouseEvent) => {
     handleDragStart(e.clientX, e.clientY);
   };
   const onMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging) return;
-    handleDragMove(e.clientX);
+    if (!isDragging || directionLock.current === "vertical") return;
+    // For mouse, we allow horizontal drag directly
+    if (directionLock.current === "undetermined") {
+      directionLock.current = "horizontal";
+    }
+    handleDragMove(e.clientX, e.clientY);
   };
   const onMouseUp = () => {
     handleDragEnd();
@@ -203,7 +277,7 @@ export default function DailyPage() {
   const globalError = errorDates["global"];
   const selectedDate = availableDates[selectedIndex]?.date || "";
 
-  // Carousel offset: each slide is 100% wide, translate by -(selectedIndex * 100%) + drag offset
+  // Carousel offset
   const carouselOffset = -(selectedIndex * slideWidth.current) + translateX;
 
   return (
@@ -263,7 +337,7 @@ export default function DailyPage() {
       ) : (
         <main
           ref={containerRef}
-          className="flex-1 max-w-lg mx-auto w-full overflow-hidden select-none"
+          className="max-w-lg mx-auto w-full overflow-hidden select-none"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
           onTouchEnd={onTouchEnd}
@@ -271,10 +345,15 @@ export default function DailyPage() {
           onMouseMove={onMouseMove}
           onMouseUp={onMouseUp}
           onMouseLeave={onMouseUp}
+          style={{
+            height: containerHeight ? `${containerHeight}px` : undefined,
+            minHeight: "200px",
+            transition: isDragging ? "none" : "height 300ms cubic-bezier(0.25, 0.1, 0.25, 1)",
+          }}
         >
           {/* Carousel track */}
           <div
-            className="flex transition-transform"
+            className="flex"
             style={{
               transform: `translateX(${carouselOffset}px)`,
               transitionDuration: isDragging ? "0ms" : "300ms",
@@ -290,7 +369,10 @@ export default function DailyPage() {
               return (
                 <div
                   key={dateInfo.date}
-                  className="w-full flex-shrink-0 px-4 py-6"
+                  ref={(el) => {
+                    if (el) slideRefs.current.set(index, el);
+                  }}
+                  className="w-full flex-shrink-0 px-4 py-4"
                   style={{ width: slideWidth.current || '100%' }}
                 >
                   {isLoading && !cachedContent ? (
@@ -316,7 +398,7 @@ export default function DailyPage() {
                         </span>
                       </div>
                       {/* Content */}
-                      <div className="px-5 py-5 select-text">
+                      <div className="px-5 py-5 select-text overflow-y-auto">
                         {cachedContent ? (
                           <MarkdownRenderer content={cachedContent} />
                         ) : (
