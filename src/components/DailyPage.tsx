@@ -475,7 +475,7 @@ export default function DailyPage() {
                   ref={(el) => {
                     if (el) slideRefs.current.set(index, el);
                   }}
-                  className="w-full flex-shrink-0 px-4 py-4"
+                  className="w-full flex-shrink-0 px-4 py-4 relative"
                   style={{ width: slideWidth.current || '100%' }}
                 >
                   {isLoading && !cachedContent ? (
@@ -513,12 +513,26 @@ export default function DailyPage() {
                         )}
                       </div>
 
-                      {/* Explore hint bar — only on 前天 card (index 2) */}
-                      {index === 2 && showExploreHint && (
-                        <div className="px-5 pb-3 flex items-center justify-center gap-1 text-xs text-amber-500/60 select-none">
-                          <span className="animate-pulse">←</span>
-                          <span>探索更早的历史</span>
-                          <span className="animate-pulse">→</span>
+                      {/* Explore hint — only on 前天 card (index 2), positioned at left edge */}
+                      {index === 2 && availableDates.length > 3 && (
+                        <div
+                          className="absolute left-0 top-0 bottom-0 flex items-center justify-center pointer-events-none select-none"
+                          style={{
+                            width: '48px',
+                            transform: `translateX(${Math.min(0, -60 + Math.max(0, -translateX / 3))}px)`,
+                            opacity: canSwipeLeft ? Math.min(1, (-translateX) / 60) : 0.6,
+                            transition: isDragging ? "none" : "opacity 300ms ease, transform 300ms ease",
+                          }}
+                        >
+                          <div
+                            className="text-xs text-amber-600/70 font-medium whitespace-nowrap"
+                            style={{
+                              writingMode: 'vertical-rl',
+                              textOrientation: 'mixed',
+                            }}
+                          >
+                            ← 探索更早的历史
+                          </div>
                         </div>
                       )}
 
