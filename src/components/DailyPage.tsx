@@ -28,25 +28,23 @@ export default function DailyPage() {
       const data = await res.json();
       if (data.availableDates && data.availableDates.length > 0) {
         const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {
-          const d = new Date(date + "T00:00:00");
-          const today = new Date();
-          const diff = Math.round(
-            (today.getTime() - d.getTime()) / (1000 * 60 * 60 * 24)
-          );
+          const [y, m, dNum] = date.split("-").map(Number);
+          const now = new Date();
+          const todayYMD = [now.getFullYear(), now.getMonth() + 1, now.getDate()];
+          const diff = (todayYMD[0] - y) * 365 + (todayYMD[1] - m) * 30 + (todayYMD[2] - dNum);
+          // More accurate: use Date objects but compare only date parts
+          const todayDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          const targetDate = new Date(y, m - 1, dNum);
+          const dayDiff = Math.round((todayDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
           let label = "";
-          switch (diff) {
+          switch (dayDiff) {
             case 0: label = "今天"; break;
             case 1: label = "昨天"; break;
             case 2: label = "前天"; break;
-            case 3: label = "3天前"; break;
-            case 4: label = "4天前"; break;
-            case 5: label = "5天前"; break;
-            case 6: label = "6天前"; break;
-            case 7: label = "7天前"; break;
-            default: label = `${d.getMonth() + 1}月${d.getDate()}日`; break;
+            default: label = `${dayDiff}天前`; break;
           }
           const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-          return { date, label, weekday: weekdays[d.getDay()] };
+          return { date, label, weekday: weekdays[targetDate.getDay()] };
         });
         setAvailableDates(dateInfos);
         setSelectedDate(data.availableDates[0]);
