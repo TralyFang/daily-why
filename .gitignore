@@ -26,8 +26,13 @@ yarn-error.log*
 # local env files
 .env*.local
 
-# vercel
+# vercel / cloudflare build output
 .vercel
+.wrangler
+.open-next
+
+# cloudflare types (auto-generated)
+env.d.ts
 
 # typescript
 *.tsbuildinfo
