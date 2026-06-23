@@ -3,7 +3,7 @@
 一个适配手机端的"每日一个为什么"内容展示网站，每天发布一篇知识问答，支持回看近 3 天内容。
 
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
-![Cloudflare Pages](https://img.shields.io/badge/Cloudflare-Pages-F38020?logo=cloudflare)
+![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?logo=tailwindcss)
 
 ## 功能特点
@@ -11,7 +11,7 @@
 - **📱 移动端优先** — 专为手机浏览设计，触摸友好
 - **📅 3 天回看** — 展示今天、昨天、前天、3 天前的内容，更早的自动隐藏
 - **✍️ Markdown 富文本** — 支持标题、加粗、列表、引用、表格、代码、图片等
-- **⚡ Cloudflare Pages** — 全球 CDN 加速，国内访问速度极佳
+- **⚡ Cloudflare Workers** — 全球 CDN 加速，国内访问速度极佳
 - **🔄 自动部署** — 推送到 GitHub 即自动重建上线
 
 ## 技术栈
@@ -21,7 +21,7 @@
 | Next.js 15 | 页面框架 + API |
 | Tailwind CSS | 移动端样式 |
 | react-markdown + remark-gfm | Markdown 渲染 |
-| @opennextjs/cloudflare | Cloudflare Pages 适配 |
+| @opennextjs/cloudflare | Cloudflare Workers 适配 |
 | Cloudflare Workers | Edge Runtime |
 
 ## 项目结构
@@ -112,19 +112,46 @@ npm run cf:build
 3. 文件名填日期（如 `2026-06-23.md`）
 4. 写入 Markdown 内容
 5. 点击 **Commit changes**
-6. 等 1-2 分钟，Cloudflare Pages 自动部署完成
+6. 等 1-2 分钟，GitHub Actions 自动构建部署完成（可在仓库 Actions 页面查看进度）
 
 > 也可以在手机浏览器上操作，完全不需要命令行。
 
-## 部署到 Cloudflare Pages
+## 部署到 Cloudflare Workers
 
-详细步骤见 [DEPLOY-GUIDE.md](./DEPLOY-GUIDE.md)，核心配置：
+> ⚠️ 本项目使用 **OpenNext for Cloudflare**，构建产物是 **Cloudflare Worker**（不是静态 Pages 站点），需要通过 **Wrangler CLI + GitHub Actions** 部署。
 
-| 配置项 | 值 |
-|--------|-----|
-| Build command | `npm run cf:build` |
-| Build output directory | `.open-next/assets` |
-| Node.js version | `20` |
+### 一、获取 Cloudflare 凭证
+
+1. 登录 https://dash.cloudflare.com
+2. 获取 **Account ID**：左侧边栏任意页面右侧栏可看到
+3. 创建 **API Token**：
+   - 进入 https://dash.cloudflare.com/profile/api-tokens
+   - 点击 **Create Token**
+   - 选择 **Edit Cloudflare Workers** 模板（或自定义）
+   - 权限至少需要 `Workers Scripts: Edit` + `Account: Read`
+   - 复制生成的 Token
+
+### 二、配置 GitHub Secrets
+
+进入仓库 **Settings → Secrets and variables → Actions → New repository secret**：
+
+| Secret 名称 | 填写内容 |
+|-------------|---------|
+| `CLOUDFLARE_ACCOUNT_ID` | 你的 Account ID |
+| `CLOUDFLARE_API_TOKEN` | 刚才创建的 API Token |
+
+### 三、自动部署
+
+配置好 Secrets 后，每次 push 到 `main` 分支会自动触发构建部署。也可在 Actions 页面手动触发。
+
+### 本地部署（可选）
+
+```bash
+npm run cf:build        # 构建
+npx wrangler deploy      # 直接部署到 Workers（需已登录 wrangler login）
+```
+
+详细步骤见 [DEPLOY-GUIDE.md](./DEPLOY-GUIDE.md)。
 
 ## 3 天回看规则
 
@@ -141,7 +168,7 @@ npm run cf:build
 
 ## 自定义域名
 
-在 Cloudflare Dashboard → Pages → 项目 → **Custom domains** 中添加你的域名，按提示配置 DNS 即可。Cloudflare 自动处理 HTTPS 证书。
+在 Cloudflare Dashboard → **Workers 和 Pages** → daily-why → **设置** → **域和路由 (Domains & Routes)** 中添加自定义域名。
 
 ## License
 
