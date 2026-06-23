@@ -131,7 +131,7 @@
   }
 }
 
-/* Swipe hint animation */
+/* Swipe hint animation (legacy - no longer used) */
 @keyframes swipeHint {
   0%, 100% { transform: translateX(0); }
   50% { transform: translateX(-8px); }

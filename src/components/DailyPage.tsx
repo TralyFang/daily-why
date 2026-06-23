@@ -12,23 +12,24 @@ interface DateInfo {
 
 export default function DailyPage() {
   const [availableDates, setAvailableDates] = useState<DateInfo[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [content, setContent] = useState<string>("");
-  const [loading, setLoading] = useState<boolean>(true);
-  const [error, setError] = useState<string>("");
-  const [swipeHint, setSwipeHint] = useState<boolean>(false);
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const [contentCache, setContentCache] = useState<Record<string, string>>({});
+  const [loadingDates, setLoadingDates] = useState<Set<string>>(new Set());
+  const [errorDates, setErrorDates] = useState<Record<string, string>>({});
+  const [datesLoaded, setDatesLoaded] = useState<boolean>(false);
 
-  // Touch swipe refs
-  const touchStartX = useRef<number>(0);
-  const touchStartY = useRef<number>(0);
-  const isSwiping = useRef<boolean>(false);
+  // Swipe state
+  const [translateX, setTranslateX] = useState<number>(0);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const dragStartX = useRef<number>(0);
+  const dragStartY = useRef<number>(0);
+  const dragDeltaX = useRef<number>(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const slideWidth = useRef<number>(0);
 
   // Fetch available dates on mount
   useEffect(() => {
     fetchDates();
-    // Show swipe hint once after first load
-    const timer = setTimeout(() => setSwipeHint(true), 1500);
-    return () => clearTimeout(timer);
   }, []);
 
   const fetchDates = async () => {
@@ -52,112 +53,158 @@ export default function DailyPage() {
           return { date, label, weekday: weekdays[targetDate.getDay()] };
         });
         setAvailableDates(dateInfos);
-        setSelectedDate(data.availableDates[0]);
+        setSelectedIndex(0);
+        setDatesLoaded(true);
+        // Load first date content immediately
+        loadContent(dateInfos[0].date);
+        // Pre-fetch next date for smoother swipe
+        if (dateInfos.length > 1) {
+          loadContent(dateInfos[1].date);
+        }
       } else {
-        setError("暂无可用内容");
-        setLoading(false);
+        setErrorDates({ "global": "暂无可用内容" });
+        setDatesLoaded(true);
       }
     } catch {
-      setError("加载失败，请刷新重试");
-      setLoading(false);
+      setErrorDates({ "global": "加载失败，请刷新重试" });
+      setDatesLoaded(true);
     }
   };
 
-  // Fetch content when date changes
-  const fetchContent = useCallback(async (date: string) => {
-    if (!date) return;
-    setLoading(true);
-    setError("");
+  // Load content for a specific date (with caching)
+  const loadContent = useCallback(async (date: string) => {
+    // Skip if already cached or currently loading
+    if (contentCache[date] || loadingDates.has(date)) return;
+
+    setLoadingDates(prev => new Set([...prev, date]));
     try {
       const res = await fetch(`/api/content?date=${date}`);
       const data = await res.json();
       if (data.content) {
-        setContent(data.content);
+        setContentCache(prev => ({ ...prev, [date]: data.content }));
       } else {
-        setContent("");
-        setError(data.error || "该日期暂无内容");
+        setErrorDates(prev => ({ ...prev, [date]: data.error || "该日期暂无内容" }));
       }
     } catch {
-      setError("加载失败，请刷新重试");
+      setErrorDates(prev => ({ ...prev, [date]: "加载失败" }));
     } finally {
-      setLoading(false);
+      setLoadingDates(prev => {
+        const next = new Set(prev);
+        next.delete(date);
+        return next;
+      });
     }
+  }, [contentCache, loadingDates]);
+
+  // When selected index changes, load content + pre-fetch adjacent
+  useEffect(() => {
+    if (availableDates.length === 0) return;
+    const current = availableDates[selectedIndex];
+    if (!current) return;
+
+    loadContent(current.date);
+
+    // Pre-fetch adjacent dates
+    if (selectedIndex > 0) {
+      loadContent(availableDates[selectedIndex - 1].date);
+    }
+    if (selectedIndex < availableDates.length - 1) {
+      loadContent(availableDates[selectedIndex + 1].date);
+    }
+  }, [selectedIndex, availableDates, loadContent]);
+
+  // Calculate slide width from container
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const updateWidth = () => {
+      slideWidth.current = containerRef.current!.offsetWidth;
+    };
+    updateWidth();
+    window.addEventListener("resize", updateWidth);
+    return () => window.removeEventListener("resize", updateWidth);
+  }, [datesLoaded]);
+
+  // Navigate to a specific index (from tab click)
+  const navigateTo = useCallback((index: number) => {
+    setSelectedIndex(index);
+    setTranslateX(0);
+    setIsDragging(false);
   }, []);
 
-  useEffect(() => {
-    if (selectedDate) {
-      fetchContent(selectedDate);
+  // --- Drag / Swipe handlers ---
+  const handleDragStart = (clientX: number, clientY: number) => {
+    dragStartX.current = clientX;
+    dragStartY.current = clientY;
+    dragDeltaX.current = 0;
+    setIsDragging(true);
+    setTranslateX(0);
+  };
+
+  const handleDragMove = (clientX: number) => {
+    if (!isDragging) return;
+    dragDeltaX.current = clientX - dragStartX.current;
+    // Clamp: can't drag beyond first/last slide
+    if (selectedIndex === 0 && dragDeltaX.current > 0) {
+      dragDeltaX.current = dragDeltaX.current * 0.3; // rubber band effect
     }
-  }, [selectedDate, fetchContent]);
-
-  // Navigate to adjacent date
-  const navigateDate = useCallback((direction: number) => {
-    const currentIndex = availableDates.findIndex(d => d.date === selectedDate);
-    if (currentIndex === -1) return;
-    const newIndex = currentIndex + direction; // +1 = left swipe (older), -1 = right swipe (newer)
-    if (newIndex >= 0 && newIndex < availableDates.length) {
-      setSelectedDate(availableDates[newIndex].date);
+    if (selectedIndex === availableDates.length - 1 && dragDeltaX.current < 0) {
+      dragDeltaX.current = dragDeltaX.current * 0.3;
     }
-  }, [availableDates, selectedDate]);
-
-  // Touch handlers for swipe
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartX.current = e.touches[0].clientX;
-    touchStartY.current = e.touches[0].clientY;
-    isSwiping.current = true;
+    setTranslateX(dragDeltaX.current);
   };
 
-  const handleTouchMove = (e: React.TouchEvent) => {
-    if (!isSwiping.current) return;
-    // Prevent page scroll while swiping horizontally
-  };
+  const handleDragEnd = () => {
+    if (!isDragging) return;
+    setIsDragging(false);
 
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    if (!isSwiping.current) return;
-    isSwiping.current = false;
-
-    const deltaX = e.changedTouches[0].clientX - touchStartX.current;
-    const deltaY = Math.abs(e.changedTouches[0].clientY - touchStartY.current);
-
-    // Only trigger if horizontal movement > vertical and exceeds threshold
-    if (Math.abs(deltaX) > deltaY && Math.abs(deltaX) > 50) {
-      if (deltaX < 0) {
-        // Swipe left → older date
-        navigateDate(1);
-      } else {
-        // Swipe right → newer date
-        navigateDate(-1);
-      }
+    const threshold = slideWidth.current * 0.2; // 20% of slide width
+    if (dragDeltaX.current < -threshold && selectedIndex < availableDates.length - 1) {
+      // Swipe left → next (older) date
+      navigateTo(selectedIndex + 1);
+    } else if (dragDeltaX.current > threshold && selectedIndex > 0) {
+      // Swipe right → previous (newer) date
+      navigateTo(selectedIndex - 1);
+    } else {
+      // Snap back to current
+      setTranslateX(0);
     }
-
-    // Hide hint after first interaction
-    setSwipeHint(false);
   };
 
-  // Mouse handlers for desktop drag support
-  const mouseDownX = useRef(0);
-  const mouseDragging = useRef(false);
-
-  const handleMouseDown = (e: React.MouseEvent) => {
-    mouseDownX.current = e.clientX;
-    mouseDragging.current = true;
+  // Touch events
+  const onTouchStart = (e: React.TouchEvent) => {
+    handleDragStart(e.touches[0].clientX, e.touches[0].clientY);
   };
-
-  const handleMouseUp = (e: React.MouseEvent) => {
-    if (!mouseDragging.current) return;
-    mouseDragging.current = false;
-
-    const deltaX = e.clientX - mouseDownX.current;
-    if (Math.abs(deltaX) > 50) {
-      if (deltaX < 0) navigateDate(1);
-      else navigateDate(-1);
+  const onTouchMove = (e: React.TouchEvent) => {
+    // If horizontal movement dominates, prevent vertical scroll
+    const deltaX = Math.abs(e.touches[0].clientX - dragStartX.current);
+    const deltaY = Math.abs(e.touches[0].clientY - dragStartY.current);
+    if (deltaX > deltaY && deltaX > 10) {
+      e.preventDefault?.();
     }
-    setSwipeHint(false);
+    handleDragMove(e.touches[0].clientX);
+  };
+  const onTouchEnd = () => {
+    handleDragEnd();
   };
 
-  const handleMouseLeave = () => {
-    mouseDragging.current = false;
+  // Mouse events
+  const onMouseDown = (e: React.MouseEvent) => {
+    handleDragStart(e.clientX, e.clientY);
   };
+  const onMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    handleDragMove(e.clientX);
+  };
+  const onMouseUp = () => {
+    handleDragEnd();
+  };
+
+  // Global error state
+  const globalError = errorDates["global"];
+  const selectedDate = availableDates[selectedIndex]?.date || "";
+
+  // Carousel offset: each slide is 100% wide, translate by -(selectedIndex * 100%) + drag offset
+  const carouselOffset = -(selectedIndex * slideWidth.current) + translateX;
 
   return (
     <div className="min-h-dvh flex flex-col bg-gradient-to-b from-brand-50 via-white to-gray-50">
@@ -189,57 +236,101 @@ export default function DailyPage() {
           <DateTabs
             dates={availableDates}
             selectedDate={selectedDate}
-            onSelect={(date) => { setSelectedDate(date); setSwipeHint(false); }}
+            onSelect={(date) => {
+              const idx = availableDates.findIndex(d => d.date === date);
+              if (idx !== -1) navigateTo(idx);
+            }}
           />
         </div>
       </div>
 
-      {/* Content Area - swipeable */}
-      <main
-        className={`flex-1 max-w-lg mx-auto w-full px-4 py-6 select-none ${swipeHint ? 'swipe-hint' : ''}`}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onMouseDown={handleMouseDown}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseLeave}
-      >
-        {loading ? (
-          <div className="flex flex-col items-center justify-center py-20">
-            <div className="w-10 h-10 rounded-full border-2 border-brand-200 border-t-brand-500 animate-spin mb-4" />
-            <p className="text-sm text-gray-400">加载中...</p>
-          </div>
-        ) : error ? (
-          <div className="empty-state">
-            <img src="/icon.webp" alt="" className="w-16 h-16 rounded-full opacity-30 mb-4" />
-            <p className="text-gray-500 text-base">{error}</p>
-            <p className="text-gray-400 text-sm mt-2">新内容每天更新，敬请期待</p>
-          </div>
-        ) : (
-          <article className="content-card">
-            {/* Date badge */}
-            <div className="bg-brand-500 text-white px-4 py-3 flex items-center justify-between">
-              <span className="font-medium">
-                {availableDates.find((d) => d.date === selectedDate)?.label}的为什么
-              </span>
-              <span className="text-sm opacity-80">
-                {availableDates.find((d) => d.date === selectedDate)?.weekday}
-              </span>
+      {/* Carousel Content Area */}
+      {!datesLoaded || globalError ? (
+        <main className="flex-1 max-w-lg mx-auto w-full px-4 py-6">
+          {!datesLoaded ? (
+            <div className="flex flex-col items-center justify-center py-20">
+              <div className="w-10 h-10 rounded-full border-2 border-brand-200 border-t-brand-500 animate-spin mb-4" />
+              <p className="text-sm text-gray-400">加载中...</p>
             </div>
-            {/* Content */}
-            <div className="px-5 py-5 select-text">
-              <MarkdownRenderer content={content} />
+          ) : (
+            <div className="empty-state">
+              <img src="/icon.webp" alt="" className="w-16 h-16 rounded-full opacity-30 mb-4" />
+              <p className="text-gray-500 text-base">{globalError}</p>
+              <p className="text-gray-400 text-sm mt-2">新内容每天更新，敬请期待</p>
             </div>
-            {/* Swipe indicator */}
-            {swipeHint && !loading && (
-              <div className="flex items-center justify-center gap-4 py-2 text-xs text-gray-300">
-                <span>← 右滑前一天</span>
-                <span>左滑后一天 →</span>
-              </div>
-            )}
-          </article>
-        )}
-      </main>
+          )}
+        </main>
+      ) : (
+        <main
+          ref={containerRef}
+          className="flex-1 max-w-lg mx-auto w-full overflow-hidden select-none"
+          onTouchStart={onTouchStart}
+          onTouchMove={onTouchMove}
+          onTouchEnd={onTouchEnd}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+        >
+          {/* Carousel track */}
+          <div
+            className="flex transition-transform"
+            style={{
+              transform: `translateX(${carouselOffset}px)`,
+              transitionDuration: isDragging ? "0ms" : "300ms",
+              transitionProperty: "transform",
+              transitionTimingFunction: "cubic-bezier(0.25, 0.1, 0.25, 1)",
+            }}
+          >
+            {availableDates.map((dateInfo, index) => {
+              const cachedContent = contentCache[dateInfo.date];
+              const isLoading = loadingDates.has(dateInfo.date);
+              const errorMsg = errorDates[dateInfo.date];
+
+              return (
+                <div
+                  key={dateInfo.date}
+                  className="w-full flex-shrink-0 px-4 py-6"
+                  style={{ width: slideWidth.current || '100%' }}
+                >
+                  {isLoading && !cachedContent ? (
+                    <div className="flex flex-col items-center justify-center py-20">
+                      <div className="w-10 h-10 rounded-full border-2 border-brand-200 border-t-brand-500 animate-spin mb-4" />
+                      <p className="text-sm text-gray-400">加载中...</p>
+                    </div>
+                  ) : errorMsg && !cachedContent ? (
+                    <div className="empty-state">
+                      <img src="/icon.webp" alt="" className="w-16 h-16 rounded-full opacity-30 mb-4" />
+                      <p className="text-gray-500 text-base">{errorMsg}</p>
+                      <p className="text-gray-400 text-sm mt-2">新内容每天更新，敬请期待</p>
+                    </div>
+                  ) : (
+                    <article className="content-card">
+                      {/* Date badge */}
+                      <div className="bg-brand-500 text-white px-4 py-3 flex items-center justify-between">
+                        <span className="font-medium">
+                          {dateInfo.label}的为什么
+                        </span>
+                        <span className="text-sm opacity-80">
+                          {dateInfo.weekday}
+                        </span>
+                      </div>
+                      {/* Content */}
+                      <div className="px-5 py-5 select-text">
+                        {cachedContent ? (
+                          <MarkdownRenderer content={cachedContent} />
+                        ) : (
+                          <p className="text-gray-400 text-center py-8">内容加载中...</p>
+                        )}
+                      </div>
+                    </article>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </main>
+      )}
 
       {/* Footer */}
       <footer className="py-6 text-center">
