@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
 import DateTabs from "./DateTabs";
 import MarkdownRenderer from "./MarkdownRenderer";
+import PullToRefresh from "./PullToRefresh";
 
 interface DateInfo {
   date: string;
@@ -113,7 +114,7 @@ export default function DailyPage() {
   }, [chanceState.used]);
 
   // fetch available dates
-  const fetchDates = async () => {
+  const fetchDates = useCallback(async () => {
     try {
       const res = await fetch("/api/content");
       const data = await res.json();
@@ -146,7 +147,20 @@ export default function DailyPage() {
       setErrorDates({ "global": "加载失败，请刷新重试" });
       setDatesLoaded(true);
     }
-  };
+  }, []);
+
+  // refresh handler for PullToRefresh: clear cache + reload
+  const handleRefresh = useCallback(async () => {
+    setContentCache({});
+    setErrorDates({});
+    setLoadingDates(new Set());
+    setDatesLoaded(false);
+    setExtraContent(null);
+    setShowExtraCard(false);
+    setExtraError(null);
+    setChanceState(getChanceState());
+    await fetchDates();
+  }, [fetchDates]);
 
   useEffect(() => {
     fetchDates();
@@ -387,6 +401,9 @@ export default function DailyPage() {
 
   return (
     <div className="min-h-dvh flex flex-col bg-gradient-to-b from-brand-50 via-white to-gray-50">
+      {/* Pull-to-refresh for PWA standalone mode */}
+      <PullToRefresh onRefresh={handleRefresh} />
+
       {/* Header */}
       <header className="sticky top-0 z-10 backdrop-blur-md bg-white/80 border-b border-gray-100">
         <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
