@@ -7,12 +7,16 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     scroll-behavior: smooth;
+    /* Prevent iOS Safari rubber-band bounce in PWA standalone mode */
+    overscroll-behavior-y: contain;
   }
 
   body {
     @apply bg-gray-50 text-gray-800;
     min-height: 100dvh;
     overflow-x: hidden;
+    /* Prevent iOS Safari rubber-band bounce in PWA standalone mode */
+    overscroll-behavior-y: contain;
   }
 
   /* Safe area padding for mobile */

@@ -197,6 +197,15 @@ export default function DailyPage() {
     if (currentIndex < availableDates.length - 1) loadContent(availableDates[currentIndex + 1].date);
   }, [currentIndex, availableDates, loadContent]);
 
+  // check if current card's content area is scrolled to top (for pull-to-refresh)
+  const isContentAtTop = useCallback(() => {
+    const currentSlide = slideRefs.current.get(currentIndex);
+    if (!currentSlide) return true;
+    const scrollable = currentSlide.querySelector('.overflow-y-auto');
+    if (!scrollable) return true;
+    return scrollable.scrollTop <= 1;
+  }, [currentIndex]);
+
   // container height
   const updateContainerHeight = useCallback(() => {
     const currentSlide = slideRefs.current.get(currentIndex);
@@ -402,7 +411,7 @@ export default function DailyPage() {
   return (
     <div className="min-h-dvh flex flex-col bg-gradient-to-b from-brand-50 via-white to-gray-50">
       {/* Pull-to-refresh for PWA standalone mode */}
-      <PullToRefresh onRefresh={handleRefresh} />
+      <PullToRefresh onRefresh={handleRefresh} isContentAtTop={isContentAtTop} />
 
       {/* Header */}
       <header className="sticky top-0 z-10 backdrop-blur-md bg-white/80 border-b border-gray-100">
