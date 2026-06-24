@@ -163,3 +163,19 @@
     transform: translateY(0);
   }
 }
+
+/* Install prompt slide-up from bottom */
+@keyframes slideUpPrompt {
+  from {
+    opacity: 0;
+    transform: translateY(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-slideUpPrompt {
+  animation: slideUpPrompt 400ms cubic-bezier(0.25, 0.1, 0.25, 1) forwards;
+}
