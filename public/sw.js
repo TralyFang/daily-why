@@ -42,24 +42,65 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API content requests — cache-first (offline priority)
+  // API content requests — stale-while-revalidate
+  // Return cached first (fast), then update cache from network in background.
+  // When data changes, notify all clients so the page can refresh itself.
   if (url.pathname.startsWith('/api/content')) {
     event.respondWith(
       caches.open(API_CACHE).then(async (cache) => {
         const cached = await cache.match(request);
-        if (cached) return cached;
 
-        try {
-          const response = await fetch(request);
+        // Start network fetch in background (do NOT await before responding)
+        const networkPromise = fetch(request).then(async (response) => {
           if (response.ok) {
-            // Cache API responses for 24 hours (stale-while-revalidate)
-            cache.put(request, response.clone());
+            const oldBody = cached ? await cached.clone().text() : '';
+            const newBody = await response.clone().text();
+
+            // Update cache
+            cache.put(request, new Response(newBody, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            }));
+
+            // If content changed, notify clients to refresh
+            if (oldBody && oldBody !== newBody) {
+              const clients = await self.clients.matchAll({ type: 'window' });
+              clients.forEach((client) => {
+                client.postMessage({ type: 'CONTENT_UPDATED', url: request.url });
+              });
+            }
+
+            // Also cache individual date content requests (warm the cache)
+            // Parse availableDates from the new list and pre-cache known-good dates
+            if (!url.searchParams.has('date') && !url.searchParams.has('type')) {
+              try {
+                const data = JSON.parse(newBody);
+                if (data.availableDates) {
+                  for (const date of data.availableDates) {
+                    const dateUrl = new URL(request.url);
+                    dateUrl.searchParams.set('date', date);
+                    // Fire-and-forget: pre-cache individual date content
+                    fetch(dateUrl).then((r) => {
+                      if (r.ok) cache.put(dateUrl.toString(), r.clone());
+                    }).catch(() => {});
+                  }
+                }
+              } catch {}
+            }
           }
           return response;
-        } catch {
-          // Offline and no cache — return empty content
-          return new Response('', { status: 503, statusText: 'Offline' });
-        }
+        }).catch(() => null);
+
+        // Return cached response immediately if available
+        if (cached) return cached;
+
+        // No cache — wait for network
+        const response = await networkPromise;
+        if (response) return response;
+
+        // Offline and no cache — return empty content
+        return new Response('', { status: 503, statusText: 'Offline' });
       })
     );
     return;

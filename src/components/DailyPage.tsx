@@ -166,6 +166,24 @@ export default function DailyPage() {
     fetchDates();
   }, []);
 
+  // Listen for Service Worker CONTENT_UPDATED message
+  // When SW detects the API response has changed, silently refresh content
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
+
+    const handler = (event: MessageEvent) => {
+      if (event.data?.type === "CONTENT_UPDATED") {
+        // Only refresh the date list (no date param), individual dates will follow
+        const isDateListUpdate = !event.data.url.includes("date=");
+        if (isDateListUpdate) {
+          handleRefresh();
+        }
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", handler);
+    return () => navigator.serviceWorker.removeEventListener("message", handler);
+  }, [handleRefresh]);
+
   // load content (with cache)
   const loadContent = useCallback(async (date: string) => {
     if (contentCache[date] || loadingDates.has(date)) return;
