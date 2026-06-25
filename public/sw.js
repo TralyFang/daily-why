@@ -140,3 +140,62 @@ self.addEventListener('fetch', (event) => {
     fetch(request).catch(() => caches.match(request))
   );
 });
+
+// ============================================================
+// Push notifications — daily reminder
+// ============================================================
+
+self.addEventListener('push', (event) => {
+  const payload = event.data ? event.data.json() : null;
+  const title = payload?.title || '每日一个为什么';
+  const options = {
+    body: payload?.body || '今天的新问题已更新，来看看吧！',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    tag: 'daily-why-reminder',
+    data: { url: payload?.url || '/' },
+    requireInteraction: false,
+    vibrate: [200, 100, 200],
+    actions: [
+      { action: 'open', title: '去看看' },
+      { action: 'dismiss', title: '知道了' },
+    ],
+  };
+  event.waitUntil(
+    self.registration.showNotification(title, options)
+  );
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  if (event.action === 'dismiss') return;
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      const url = event.notification.data?.url || '/';
+      for (const client of clientList) {
+        if (client.url.includes(url) && 'focus' in client) {
+          return client.focus();
+        }
+      }
+      if (clients.openWindow) return clients.openWindow(url);
+    })
+  );
+});
+
+// ============================================================
+// Heartbeat — client posts message once per day
+// ============================================================
+
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'HEARTBEAT') {
+    const deviceId = event.data.deviceId;
+    // Forward heartbeat to server in background (fire-and-forget)
+    event.waitUntil(
+      fetch('/api/push/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId }),
+      }).catch(() => {})
+    );
+  }
+});

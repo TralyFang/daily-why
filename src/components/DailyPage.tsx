@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react
 import DateTabs from "./DateTabs";
 import MarkdownRenderer from "./MarkdownRenderer";
 import PullToRefresh from "./PullToRefresh";
+import ReminderSettings from "./ReminderSettings";
 
 interface DateInfo {
   date: string;
@@ -444,7 +445,8 @@ export default function DailyPage() {
               每日一个为什么
             </h1>
           </div>
-          <div className="text-xs text-gray-400">
+          <div className="text-xs text-gray-400 flex items-center gap-2">
+            <ReminderSettings />
             {new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}
           </div>
         </div>
