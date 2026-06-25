@@ -11,18 +11,19 @@ const PRE_CACHE_URLS = [
   '/icon.webp',
 ];
 
-// Install: pre-cache static shell
+// Install: pre-cache static shell, then take over immediately
 self.addEventListener('install', (event) => {
+  self.skipWaiting();
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
       return cache.addAll(PRE_CACHE_URLS);
     })
   );
-  self.skipWaiting();
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches, then take over all clients immediately
 self.addEventListener('activate', (event) => {
+  self.clients.claim();
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
