@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "exportedAt": "2026-06-25T06:27:20Z",
+  "project": "daily-why",
+  "automations": [
+    {
+      "name": "每日一个为什么",
+      "prompt": "为\"每日一个为什么\"网站生成今天的内容（1篇主内容 + 3篇备用内容），生成的内容文件保存在项目根目录的 data/ 目录下。\n\n步骤：\n1. 用 `date` 命令获取今天的日期（YYYY-MM-DD格式）\n\n2. 选择4个不同的有趣科普主题（自然科学、生活常识、历史故事、科技、生物等随机选题），4篇主题各不相同，风格多样化\n\n3. 写4篇约300-500字的Markdown格式文章，每篇结构如下：\n   - # 为什么XXX？ （标题必须是\"为什么\"开头）\n   - 1-2个子标题展开解释\n   - 使用加粗、列表、引用等Markdown格式让内容丰富\n   - 结尾用引用块写一句总结金句\n   - 底部附参考资料来源\n\n4. **保存到项目 data/ 目录**（用于本地开发调试）：\n   - 主内容 → <项目目录>/data/<今天日期>.md\n   - 备用1 → <项目目录>/data/<今天日期>-extra-1.md\n   - 备用2 → <项目目录>/data/<今天日期>-extra-2.md\n   - 备用3 → <项目目录>/data/<今天日期>-extra-3.md\n   注意：data/*.md 已在 .gitignore 中排除，不会被 git 追踪。\n\n5. 用 wrangler CLI 写入 Cloudflare KV，共4条：\n\n   **主内容**（key = 今天日期）：\n   - 先把内容写入 /tmp/daily-why-main.md\n   - cd <项目目录> && npx wrangler kv key put \"<今天日期>\" --namespace-id=de18acc52fdb45b0ab999e9ac3793ba6 --ttl=604800 --remote --path=/tmp/daily-why-main.md\n\n   **备用内容1**（key = 今天日期-extra-1）：\n   - 先把内容写入 /tmp/daily-why-extra-1.md\n   - cd <项目目录> && npx wrangler kv key put \"<今天日期>-extra-1\" --namespace-id=de18acc52fdb45b0ab999e9ac3793ba6 --ttl=604800 --remote --path=/tmp/daily-why-extra-1.md\n\n   **备用内容2**（key = 今天日期-extra-2）：\n   - 先把内容写入 /tmp/daily-why-extra-2.md\n   - cd <项目目录> && npx wrangler kv key put \"<今天日期>-extra-2\" --namespace-id=de18acc52fdb45b0ab999e9ac3793ba6 --ttl=604800 --remote --path=/tmp/daily-why-extra-2.md\n\n   **备用内容3**（key = 今天日期-extra-3）：\n   - 先把内容写入 /tmp/daily-why-extra-3.md\n   - cd <项目目录> && npx wrangler kv key put \"<今天日期>-extra-3\" --namespace-id=de18acc52fdb45b0ab999e9ac3793ba6 --ttl=604800 --remote --path=/tmp/daily-why-extra-3.md\n\n6. 验证写入成功（读取主内容确认）：\n   cd <项目目录> && npx wrangler kv key get \"<今天日期>\" --namespace-id=de18acc52fdb45b0ab999e9ac3793ba6 --remote\n\n重要：\n- 使用 npx 命令（wrangler 需要项目目录下有 node_modules）\n- wrangler 命令需要在项目目录下执行\n- KV namespace ID: de18acc52fdb45b0ab999e9ac3793ba6\n- TTL = 604800（7天）\n- 每天生成4个不同的主题，不要重复近7天的题材\n- 内容风格：通俗易懂、有趣味性、有深度，适合大众阅读\n- 4篇内容主题差异要大，避免同类型扎堆",
+      "scheduleType": "recurring",
+      "rrule": "FREQ=DAILY;BYHOUR=0;BYMINUTE=5",
+      "cwds": ["<项目目录>"],
+      "status": "ACTIVE"
+    }
+  ],
+  "importInstructions": {
+    "description": "在 WorkBuddy 中导入此自动化任务的步骤：",
+    "steps": [
+      "1. 把本文件中的 <项目目录> 替换为实际的项目绝对路径",
+      "2. 在 WorkBuddy 中创建自动化（使用 automation_update 创建）",
+      "3. 填入 name、prompt、scheduleType、rrule、cwds 字段",
+      "4. 确保项目已 npm install，wrangler 已登录 (npx wrangler login)"
+    ]
+  }
+}
