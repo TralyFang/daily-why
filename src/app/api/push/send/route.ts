@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import webpush from "web-push";
+import { VAPID_PUBLIC_KEY } from "@/lib/vapid";
 
 const VAPID_SUBJECT = "mailto:1033147540@qq.com";
+const TARGET_HOUR = 10;    // 北京时 10:30
+const TARGET_MINUTE = 30;
 
 interface SubRecord {
   subscription: PushSubscriptionJSON;
-  hour: number;
-  minute: number;
   deviceId: string;
   createdAt: string;
   lastVisitedDate: string;
@@ -70,7 +71,7 @@ async function handleCron() {
       return NextResponse.json({ error: "VAPID_PRIVATE_KEY 未配置" }, { status: 500 });
     }
 
-    webpush.setVapidDetails(VAPID_SUBJECT, process.env.VAPID_PUBLIC_KEY || "", vapidPrivateKey);
+    webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, vapidPrivateKey);
 
     const kv = await getKV();
 
@@ -85,18 +86,20 @@ async function handleCron() {
       }
     }
 
+    // All users share the same push time (10:30 Beijing time).
+    // Cron worker calls this endpoint every 15 min during 10:00-10:59.
+    // Only process if we are within the target window (±15 min).
+    if (currentHour !== TARGET_HOUR || Math.abs(currentMinute - TARGET_MINUTE) > 15) {
+      return NextResponse.json({
+        status: "not-yet",
+        message: `当前北京时间 ${currentHour}:${pad(currentMinute)}，不在推送窗口 (${TARGET_HOUR}:${TARGET_MINUTE} ±15min)`,
+        results,
+      });
+    }
+
     let anySent = false;
 
     for (const sub of subscriptions) {
-      // Check time match (allow 15-minute window)
-      const timeMatch = sub.hour === currentHour &&
-        Math.abs(sub.minute - currentMinute) <= 15;
-
-      if (!timeMatch) {
-        results.skipped.push(`time-mismatch:${sub.deviceId} (${sub.hour}:${pad(sub.minute)})`);
-        continue;
-      }
-
       // Check if user visited today — skip if they already came
       if (sub.lastVisitedDate === todayStr) {
         results.skipped.push(`already-visited:${sub.deviceId}`);

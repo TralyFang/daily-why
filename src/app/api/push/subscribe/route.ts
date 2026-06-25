@@ -2,8 +2,6 @@ import { NextResponse } from "next/server";
 
 interface SubscribeBody {
   subscription: PushSubscriptionJSON;
-  hour: number;
-  minute: number;
   deviceId: string;
 }
 
@@ -26,8 +24,6 @@ export async function POST(request: Request) {
 
     const record = {
       subscription: body.subscription,
-      hour: body.hour ?? 10,
-      minute: body.minute ?? 30,
       deviceId: body.deviceId,
       createdAt: todayStr,
       lastVisitedDate: todayStr,

@@ -5,6 +5,7 @@
 ![Next.js](https://img.shields.io/badge/Next.js-15-black?logo=next.js)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-F38020?logo=cloudflare)
 ![Tailwind CSS](https://img.shields.io/badge/Tailwind-3.4-38B2AC?logo=tailwindcss)
+![PWA](https://img.shields.io/badge/PWA-ready-0c8ce9?logo=pwa)
 
 ## 功能概览
 
@@ -17,6 +18,7 @@
 - 已接入 PWA，支持安装到手机桌面
 - 独立安装模式下支持下拉刷新
 - Service Worker 会缓存静态资源和内容接口，弱网或离线时可回看已访问内容
+- **每日提醒推送**：PWA 安装后可开启每日推送通知（默认 10:30），智能跳过已访问用户
 
 ## 技术栈
 
@@ -26,9 +28,10 @@
 | React 18 | 客户端交互 |
 | Tailwind CSS | 界面样式 |
 | react-markdown + remark-gfm | Markdown 渲染 |
+| web-push | Web Push 通知 |
 | OpenNext for Cloudflare | Next.js 适配 Cloudflare Workers |
-| Cloudflare Workers | 运行时部署 |
-| Cloudflare KV | 线上内容存储 |
+| Cloudflare Workers | 运行时部署 + Cron 定时推送 |
+| Cloudflare KV | 线上内容存储 + 推送订阅管理 |
 
 ## 内容规则
 
@@ -53,38 +56,51 @@
 - 主内容默认仅返回近 7 天窗口内的数据
 - 实际范围为：今天 + 往前 7 天，共最多 8 个日期
 - 顶部标签只展示最近 3 天
-- 更早日期通过左滑进入“探索历史”模式查看
+- 更早日期通过左滑进入"探索历史"模式查看
 
 ## 项目结构
 
 ```text
 daily-why/
-├── data/                         # Markdown 内容源
+├── data/                         # Markdown 内容源 (gitignored)
 ├── public/
 │   ├── manifest.json            # PWA manifest
-│   ├── sw.js                    # Service Worker
+│   ├── sw.js                    # Service Worker（缓存+推送）
+│   ├── _headers                 # Cloudflare 静态资源缓存头
 │   └── icon-*.png/webp          # 应用图标
+├── workers/
+│   └── cron-push/               # Cloudflare Cron Worker（定时推送触发）
+│       ├── worker.js
+│       └── wrangler.toml
 ├── src/
 │   ├── app/
-│   │   ├── api/content/route.ts # 内容接口
-│   │   ├── globals.css          # 全局样式
-│   │   ├── layout.tsx           # 页面元信息与全局注册
-│   │   └── page.tsx             # 首页入口
+│   │   ├── api/
+│   │   │   ├── content/route.ts       # 内容接口
+│   │   │   └── push/
+│   │   │       ├── subscribe/route.ts # 推送订阅
+│   │   │       ├── unsubscribe/route.ts # 取消订阅
+│   │   │       ├── send/route.ts      # 定时推送发送
+│   │   │       └── heartbeat/route.ts # 每日心跳（标记已访问）
+│   │   ├── globals.css                # 全局样式
+│   │   ├── layout.tsx                 # 页面元信息与全局注册
+│   │   └── page.tsx                   # 首页入口
 │   ├── components/
-│   │   ├── DailyPage.tsx        # 主页面与交互逻辑
-│   │   ├── DateTabs.tsx         # 顶部日期切换
-│   │   ├── InstallPrompt.tsx    # iOS / Android 安装引导
-│   │   ├── MarkdownRenderer.tsx # Markdown 渲染
-│   │   ├── PullToRefresh.tsx    # PWA 下拉刷新
-│   │   └── ServiceWorkerRegistration.tsx
+│   │   ├── DailyPage.tsx              # 主页面与交互逻辑
+│   │   ├── DateTabs.tsx               # 顶部日期切换
+│   │   ├── InstallPrompt.tsx          # iOS / Android 安装引导
+│   │   ├── MarkdownRenderer.tsx       # Markdown 渲染
+│   │   ├── PullToRefresh.tsx          # PWA 下拉刷新
+│   │   ├── ReminderSettings.tsx       # 每日提醒开关设置
+│   │   └── ServiceWorkerRegistration.tsx # SW 注册 + 心跳管理
 │   └── lib/
 │       ├── content.ts           # 内容读取与 KV 读写
 │       ├── dates.ts             # 日期窗口与标签计算
+│       ├── vapid.ts             # VAPID 公钥常量
 │       └── cloudflare-env.d.ts
 ├── .github/workflows/deploy.yml # GitHub Actions 自动部署
 ├── wrangler.jsonc               # Workers 与 KV 配置
 ├── open-next.config.ts          # OpenNext 配置
-└── DEPLOY-GUIDE.md              # 额外部署说明
+└── automation.json              # WorkBuddy 内容生成自动化配置
 ```
 
 ## 本地开发
@@ -96,14 +112,24 @@ npm run dev
 
 默认访问：`http://localhost:3000`
 
+### 本地开发环境变量
+
+本地开发需要配置 `.dev.vars`（已 gitignored）：
+
+```bash
+NEXTJS_ENV=development
+VAPID_PRIVATE_KEY=你的VAPID私钥
+```
+
 ## 常用命令
 
 ```bash
-npm run dev
-npm run build
-npm run cf:build
-npm run cf:preview
-npm run cf:deploy
+npm run dev            # 本地开发
+npm run build          # Next.js 构建
+npm run cf:build       # OpenNext Cloudflare 构建
+npm run cf:preview     # 本地预览 Cloudflare Worker
+npm run cf:deploy      # 部署主 Worker
+npm run cron:deploy    # 部署 Cron Worker（定时推送触发器）
 ```
 
 ## 内容新增方式
@@ -158,32 +184,74 @@ GET /api/content?date=2026-06-24-extra-1
 GET /api/content?type=extras&today=2026-06-24
 ```
 
+### 推送管理接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/api/push/subscribe` | POST | 保存设备推送订阅 |
+| `/api/push/unsubscribe` | POST | 删除设备推送订阅 |
+| `/api/push/send` | GET/POST | 定时推送（由 Cron Worker 调用） |
+| `/api/push/heartbeat` | POST | 每日心跳，标记今天已访问 |
+
 ## 部署说明
 
 项目当前采用 `OpenNext + Cloudflare Workers + Cloudflare KV`。
 
-### 1. Cloudflare 侧准备
+### 前置准备
 
-- 创建 Worker
-- 创建或绑定 `CONTENT_KV`
+#### 1. Cloudflare 资源
+
+- 创建 Worker（`daily-why`）
+- 创建或绑定 `CONTENT_KV` KV 命名空间
 - 在 `wrangler.jsonc` 中配置 `kv_namespaces`
 
-### 2. GitHub Secrets
+#### 2. VAPID 密钥配置
+
+Web Push 需要 VAPID 密钥对，用于推送服务端身份验证：
+
+```bash
+# 生成密钥对（已内置在 src/lib/vapid.ts）
+npx web-push generate-vapid-keys
+```
+
+将私钥配置为 Cloudflare Worker Secret（**不可提交到代码仓库**）：
+
+```bash
+# 设置 VAPID_PRIVATE_KEY secret（仅需执行一次）
+echo "你的VAPID私钥" | npx wrangler secret put VAPID_PRIVATE_KEY
+```
+
+公钥已硬编码在 `src/lib/vapid.ts`，无需额外配置。
+
+#### 3. GitHub Secrets
 
 在仓库中配置：
 
-- `CLOUDFLARE_ACCOUNT_ID`
-- `CLOUDFLARE_API_TOKEN`
+| Secret | 说明 |
+|--------|------|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账户 ID |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare API Token（需 Workers 权限） |
 
-### 3. 自动部署
+#### 4. 自动部署
 
-仓库已包含 [`.github/workflows/deploy.yml`](/Users/tralyfang/WorkBuddy/2026-06-22-11-02-26/daily-why/.github/workflows/deploy.yml)，推送到 `main` 后会自动执行：
+仓库已包含 [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml)，推送到 `main` 后会自动执行：
 
 1. `npm ci`
 2. `npm run cf:build`
 3. `npx wrangler deploy`
 
-### 4. 本地预览或部署
+#### 5. 部署 Cron Worker（定时推送触发器）
+
+Cron Worker 是一个独立的轻量 Worker，通过 Cloudflare Cron Triggers 每天 10:30 和 10:45（北京时间）调用主 Worker 的 `/api/push/send` 接口。
+
+```bash
+# 首次部署需要单独执行（后续很少变更）
+npm run cron:deploy
+```
+
+> **工作原理**：Cron Worker 通过 service binding 直接调用主 Worker，无需暴露公网 URL，无需配置额外密钥。
+
+### 本地预览或部署
 
 ```bash
 npm run cf:build
@@ -196,19 +264,49 @@ npm run cf:preview
 npm run cf:deploy
 ```
 
+## 每日提醒推送
+
+### 工作流程
+
+```
+用户开启提醒 → 浏览器订阅 Web Push → 保存到 KV
+                                      ↓
+                              每天 10:30 定时触发
+                              (Cron Worker → /api/push/send)
+                                      ↓
+                              检查：用户今天已访问？→ 跳过
+                              检查：超过 30 天未访问？→ 清理订阅
+                                      ↓
+                              发送推送通知 → 标记已推送
+```
+
+### 智能跳过
+
+- **今天已访问**：如果用户当天已打开过 PWA（通过 heartbeat 标记），自动跳过推送
+- **僵尸订阅清理**：超过 30 天未访问的设备，自动清理其订阅记录
+- **权限同步**：用户在系统设置中关闭通知权限后，自动取消订阅
+
+### 推送时间
+
+- 统一在每天 **10:30**（北京时间）推送
+- 不支持自定义时间（简化设计，避免复杂的调度逻辑）
+
 ## PWA 说明
 
 - 已配置 `manifest.json`
-- 已注册 `sw.js`
-- iOS Safari 下会显示“添加到主屏幕”引导
+- 已注册 `sw.js`（含缓存策略 + Push 通知处理）
+- iOS Safari 下会显示"添加到主屏幕"引导
 - Android Chrome 下会捕获 `beforeinstallprompt`，展示站内安装卡片并触发系统安装弹窗
 - 安装成独立应用后支持下拉刷新
+- **提醒设置仅在 PWA standalone 模式下可见**
 
 ## 备注
 
 - 本地开发优先从 `data/` 目录读取内容
 - 线上环境优先从 `CONTENT_KV` 读取内容
 - 如果某天没有对应文件，该日期不会出现在可查看列表中
+- `.dev.vars` 已加入 `.gitignore`，不会提交到代码仓库
+- VAPID 私钥通过 `wrangler secret put` 管理，不在代码中
 
 ## License
 

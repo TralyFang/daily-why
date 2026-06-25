@@ -7,24 +7,21 @@ import { VAPID_PUBLIC_KEY } from "@/lib/vapid";
 
 interface ReminderConfig {
   enabled: boolean;
-  hour: number;
-  minute: number;
 }
 
 const STORAGE_KEY = "daily-why-reminder";
 
-function getToday(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
 function loadConfig(): ReminderConfig {
-  if (typeof window === "undefined") return { enabled: false, hour: 10, minute: 30 };
+  if (typeof window === "undefined") return { enabled: false };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      // Migration: old format had hour/minute fields, new format only has enabled
+      return { enabled: !!parsed.enabled };
+    }
   } catch {}
-  return { enabled: false, hour: 10, minute: 30 };
+  return { enabled: false };
 }
 
 function saveConfig(config: ReminderConfig) {
@@ -43,26 +40,11 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array {
   return outputArray;
 }
 
-// ---- helpers for UI labels ----
-
-const HOURS = Array.from({ length: 24 }, (_, i) => i);
-const MINUTES = [0, 15, 30, 45];
-
-function pad(n: number): string {
-  return String(n).padStart(2, "0");
-}
-
-function getNextReminderLabel(hour: number, minute: number): string {
-  return `下次提醒：明天 ${pad(hour)}:${pad(minute)}`;
-}
-
 // ---- component ----
 
 export default function ReminderSettings() {
   const [open, setOpen] = useState(false);
-  const [config, setConfig] = useState<ReminderConfig>({ enabled: false, hour: 10, minute: 30 });
-  const [draftHour, setDraftHour] = useState(10);
-  const [draftMinute, setDraftMinute] = useState(30);
+  const [config, setConfig] = useState<ReminderConfig>({ enabled: false });
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
@@ -71,15 +53,13 @@ export default function ReminderSettings() {
   useEffect(() => {
     const c = loadConfig();
     setConfig(c);
-    setDraftHour(c.hour);
-    setDraftMinute(c.minute);
     setDraftEnabled(c.enabled);
     if (c.enabled) checkPermission();
   }, []);
 
   // Check notification permission
   const checkPermission = useCallback(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return "denied";
     if ("Notification" in window) {
       setPermissionDenied(Notification.permission === "denied");
       return Notification.permission;
@@ -92,10 +72,8 @@ export default function ReminderSettings() {
     if (!config.enabled) return;
     if (typeof window === "undefined") return;
 
-    // Re-check on every open
     const perm = checkPermission();
     if (perm === "denied") {
-      // Permission denied → auto unsubscribe
       unsubscribe().then(() => {
         const updated = { ...config, enabled: false };
         setConfig(updated);
@@ -103,7 +81,7 @@ export default function ReminderSettings() {
         saveConfig(updated);
       });
     }
-  }, []); // only run once on mount
+  }, []);
 
   // Subscribe to push
   const subscribe = async (): Promise<string | null> => {
@@ -129,8 +107,6 @@ export default function ReminderSettings() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subscription,
-        hour: draftHour,
-        minute: draftMinute,
         deviceId,
       }),
     });
@@ -165,7 +141,7 @@ export default function ReminderSettings() {
 
         if (perm !== "granted") {
           setPermissionDenied(true);
-          return; // Don't close, let user see the guidance
+          return;
         }
 
         setPermissionDenied(false);
@@ -174,11 +150,7 @@ export default function ReminderSettings() {
         await unsubscribe();
       }
 
-      const updated: ReminderConfig = {
-        enabled: draftEnabled,
-        hour: draftHour,
-        minute: draftMinute,
-      };
+      const updated: ReminderConfig = { enabled: draftEnabled };
       setConfig(updated);
       saveConfig(updated);
       setOpen(false);
@@ -191,16 +163,12 @@ export default function ReminderSettings() {
 
   // Handle cancel (revert draft)
   const handleCancel = () => {
-    setDraftHour(config.hour);
-    setDraftMinute(config.minute);
     setDraftEnabled(config.enabled);
     setOpen(false);
   };
 
   // Open settings
   const handleOpen = () => {
-    setDraftHour(config.hour);
-    setDraftMinute(config.minute);
     setDraftEnabled(config.enabled);
     checkPermission();
     setOpen(true);
@@ -210,25 +178,6 @@ export default function ReminderSettings() {
   const handleBackdropClick = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) handleCancel();
   };
-
-  // Helper: minute selector
-  const renderMinuteSelector = () => (
-    <div className="flex gap-2 justify-center">
-      {MINUTES.map((m) => (
-        <button
-          key={m}
-          onClick={() => setDraftMinute(m)}
-          className={`w-14 h-10 rounded-lg text-sm font-medium transition-all duration-200 ${
-            draftMinute === m
-              ? "bg-brand-500 text-white shadow-sm"
-              : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-          }`}
-        >
-          {pad(m)}
-        </button>
-      ))}
-    </div>
-  );
 
   return (
     <>
@@ -282,9 +231,10 @@ export default function ReminderSettings() {
               </h2>
             </div>
 
-            {/* Time picker */}
+            {/* Content */}
             <div className="px-6 pb-6">
-              <div className="flex items-center justify-center gap-3 mb-4">
+              {/* Info */}
+              <div className="flex items-center justify-center gap-2 mb-6">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
                   viewBox="0 0 24 24"
@@ -299,42 +249,18 @@ export default function ReminderSettings() {
                     d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                <span className="text-sm text-gray-500">提醒时间</span>
-              </div>
-
-              {/* Hour selector */}
-              <div className="flex items-center justify-center gap-2 mb-3">
-                <span className="text-xs text-gray-400 w-6 text-right">时</span>
-                <div className="grid grid-cols-6 gap-1.5 flex-1 max-w-xs">
-                  {HOURS.map((h) => (
-                    <button
-                      key={h}
-                      onClick={() => setDraftHour(h)}
-                      className={`py-1.5 rounded-lg text-xs font-medium transition-all duration-200 ${
-                        draftHour === h
-                          ? "bg-brand-500 text-white shadow-sm"
-                          : "bg-gray-50 text-gray-600 hover:bg-gray-100"
-                      }`}
-                    >
-                      {pad(h)}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Minute selector */}
-              <div className="flex items-center justify-center gap-2 mb-6">
-                <span className="text-xs text-gray-400 w-6 text-right">分</span>
-                {renderMinuteSelector()}
-                <span className="w-6" />
+                <span className="text-sm text-gray-500">每天 10:30 推送提醒</span>
               </div>
 
               {/* Toggle switch */}
               <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3 mb-4">
-                <span className="text-sm text-gray-700 font-medium">开启提醒</span>
+                <div>
+                  <span className="text-sm text-gray-700 font-medium">开启提醒</span>
+                  <p className="text-xs text-gray-400 mt-0.5">每天上午 10:30 收到推送通知</p>
+                </div>
                 <button
                   onClick={() => setDraftEnabled(!draftEnabled)}
-                  className={`relative w-12 h-7 rounded-full transition-colors duration-300 ${
+                  className={`relative w-12 h-7 rounded-full transition-colors duration-300 flex-shrink-0 ${
                     draftEnabled ? "bg-brand-500" : "bg-gray-300"
                   }`}
                 >
@@ -345,13 +271,6 @@ export default function ReminderSettings() {
                   />
                 </button>
               </div>
-
-              {/* Preview text */}
-              {draftEnabled && (
-                <div className="text-center text-sm text-brand-600 mb-4">
-                  {getNextReminderLabel(draftHour, draftMinute)}
-                </div>
-              )}
 
               {/* Permission denied warning */}
               {permissionDenied && draftEnabled && (
