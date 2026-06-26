@@ -20,16 +20,19 @@ async function getKV() {
 }
 
 // GET for manual testing / cron trigger via HTTP
-// POST for programmatic calls
-export async function GET() {
-  return handleCron();
+// ?debug=1 bypasses time window & daily dedup (for testing)
+// POST for programmatic calls (cron worker)
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const debug = url.searchParams.get("debug") === "1";
+  return handleCron(debug);
 }
 
 export async function POST() {
-  return handleCron();
+  return handleCron(false);
 }
 
-async function handleCron() {
+async function handleCron(debug: boolean = false) {
   const results: { sent: string[]; skipped: string[]; cleaned: string[]; errors: string[] } = {
     sent: [],
     skipped: [],
@@ -45,24 +48,26 @@ async function handleCron() {
     const currentHour = beijingTime.getUTCHours();
     const currentMinute = beijingTime.getUTCMinutes();
 
-    // Check if already sent today
-    try {
-      const kv = await getKV();
-      const alreadySent = await kv.get(`push:sent:${todayStr}`);
-      if (alreadySent) {
+    // Check if already sent today (skip in debug mode)
+    if (!debug) {
+      try {
+        const kv = await getKV();
+        const alreadySent = await kv.get(`push:sent:${todayStr}`);
+        if (alreadySent) {
+          return NextResponse.json({
+            status: "already-sent",
+            message: `今天 (${todayStr}) 已推送过`,
+            results,
+          });
+        }
+      } catch {
+        // KV not available (local dev) — bail out
         return NextResponse.json({
-          status: "already-sent",
-          message: `今天 (${todayStr}) 已推送过`,
+          status: "kv-unavailable",
+          message: "KV 不可用，跳过推送",
           results,
         });
       }
-    } catch {
-      // KV not available (local dev) — bail out
-      return NextResponse.json({
-        status: "kv-unavailable",
-        message: "KV 不可用，跳过推送",
-        results,
-      });
     }
 
     // Setup web-push
@@ -89,7 +94,8 @@ async function handleCron() {
     // All users share the same push time (10:30 Beijing time).
     // Cron worker calls this endpoint every 15 min during 10:00-10:59.
     // Only process if we are within the target window (±15 min).
-    if (currentHour !== TARGET_HOUR || Math.abs(currentMinute - TARGET_MINUTE) > 15) {
+    // Debug mode bypasses this check.
+    if (!debug && (currentHour !== TARGET_HOUR || Math.abs(currentMinute - TARGET_MINUTE) > 15)) {
       return NextResponse.json({
         status: "not-yet",
         message: `当前北京时间 ${currentHour}:${pad(currentMinute)}，不在推送窗口 (${TARGET_HOUR}:${TARGET_MINUTE} ±15min)`,
@@ -100,8 +106,8 @@ async function handleCron() {
     let anySent = false;
 
     for (const sub of subscriptions) {
-      // Check if user visited today — skip if they already came
-      if (sub.lastVisitedDate === todayStr) {
+      // Check if user visited today — skip if they already came (skip in debug mode)
+      if (!debug && sub.lastVisitedDate === todayStr) {
         results.skipped.push(`already-visited:${sub.deviceId}`);
         continue;
       }
@@ -144,8 +150,8 @@ async function handleCron() {
       }
     }
 
-    // Mark today as sent only if we actually sent something
-    if (anySent) {
+    // Mark today as sent only if we actually sent something (skip in debug mode)
+    if (anySent && !debug) {
       await kv.put(`push:sent:${todayStr}`, "1", { expirationTtl: 86400 });
     }
 
