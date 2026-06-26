@@ -69,6 +69,7 @@ export default function ReminderSettings() {
   const [draftEnabled, setDraftEnabled] = useState(false);
   const [saving, setSaving] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [standalone, setStandalone] = useState(true);
   const [mounted, setMounted] = useState(false);
 
@@ -128,10 +129,19 @@ export default function ReminderSettings() {
     let subscription = await registration.pushManager.getSubscription();
 
     if (!subscription) {
-      subscription = await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
-      });
+      try {
+        subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) as BufferSource,
+        });
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        // Push service unreachable (common in China where FCM is blocked)
+        if (errMsg.includes("push service") || errMsg.includes("AbortError") || errMsg.includes("NetworkError")) {
+          throw new Error("无法连接推送服务。可能是网络限制（Chrome 需要访问 Google 服务）。建议使用 iOS/macOS Safari 或开启代理后重试。");
+        }
+        throw err;
+      }
     }
 
     const deviceId = localStorage.getItem("daily-why-device-id") || crypto.randomUUID();
@@ -177,6 +187,7 @@ export default function ReminderSettings() {
   // Handle save
   const handleSave = async () => {
     setSaving(true);
+    setSaveError(null);
     try {
       if (draftEnabled) {
         // Request notification permission
@@ -199,8 +210,12 @@ export default function ReminderSettings() {
       const updated: ReminderConfig = { enabled: draftEnabled };
       setConfig(updated);
       saveConfig(updated);
+      setSaveError(null);
       setOpen(false);
     } catch (err) {
+      const msg = err instanceof Error ? err.message : "操作失败，请重试";
+      setSaveError(msg);
+      setDraftEnabled(false);
       console.error("Reminder save failed:", err);
     } finally {
       setSaving(false);
@@ -544,6 +559,13 @@ export default function ReminderSettings() {
                           </p>
                         </div>
                       </div>
+                    </div>
+                  )}
+
+                  {/* Save error message */}
+                  {saveError && (
+                    <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-4">
+                      <p className="text-xs text-red-700 leading-relaxed">{saveError}</p>
                     </div>
                   )}
 
