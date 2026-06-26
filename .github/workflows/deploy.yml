@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Inject SW version (git commit hash)
+        run: sed -i "s/__SW_VERSION__/$(git rev-parse --short HEAD)/" public/sw.js
+
       - name: Build (OpenNext for Cloudflare)
         run: npm run cf:build
 

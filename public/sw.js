@@ -1,6 +1,9 @@
-const CACHE_NAME = 'daily-why-v1';
-const STATIC_CACHE = 'daily-why-static-v1';
-const API_CACHE = 'daily-why-api-v1';
+// Cache version — auto-injected by CI (see .github/workflows/deploy.yml)
+// In local dev the placeholder stays as-is, so we fallback to a date-based version
+const _RAW_VERSION = '__SW_VERSION__';
+const SW_VERSION = _RAW_VERSION.includes('__') ? `dev-${new Date().toISOString().slice(0,10)}` : _RAW_VERSION;
+const STATIC_CACHE = `daily-why-static-v${SW_VERSION}`;
+const API_CACHE = `daily-why-api-v${SW_VERSION}`;
 
 // Static assets to pre-cache on install
 const PRE_CACHE_URLS = [
@@ -21,18 +24,28 @@ self.addEventListener('install', (event) => {
   );
 });
 
-// Activate: clean up old caches, then take over all clients immediately
+// Activate: clean up ALL old caches that don't match current version
 self.addEventListener('activate', (event) => {
-  self.clients.claim();
   event.waitUntil(
     caches.keys().then((keys) => {
       return Promise.all(
-        keys.filter((key) => key !== STATIC_CACHE && key !== API_CACHE)
+        keys
+          .filter((key) => key !== STATIC_CACHE && key !== API_CACHE)
           .map((key) => caches.delete(key))
       );
+    }).then(() => self.clients.claim())
+  );
+});
+
+// Notify all clients that SW has been updated
+self.addEventListener('activate', (event) => {
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then((clients) => {
+      clients.forEach((client) => {
+        client.postMessage({ type: 'SW_UPDATED', version: SW_VERSION });
+      });
     })
   );
-  self.clients.claim();
 });
 
 // Fetch: network-first with cache fallback
@@ -73,7 +86,6 @@ self.addEventListener('fetch', (event) => {
             }
 
             // Also cache individual date content requests (warm the cache)
-            // Parse availableDates from the new list and pre-cache known-good dates
             if (!url.searchParams.has('date') && !url.searchParams.has('type')) {
               try {
                 const data = JSON.parse(newBody);
@@ -81,7 +93,6 @@ self.addEventListener('fetch', (event) => {
                   for (const date of data.availableDates) {
                     const dateUrl = new URL(request.url);
                     dateUrl.searchParams.set('date', date);
-                    // Fire-and-forget: pre-cache individual date content
                     fetch(dateUrl).then((r) => {
                       if (r.ok) cache.put(dateUrl.toString(), r.clone());
                     }).catch(() => {});
@@ -187,6 +198,12 @@ self.addEventListener('notificationclick', (event) => {
 // ============================================================
 
 self.addEventListener('message', (event) => {
+  // Allow clients to trigger skipWaiting when user clicks "update"
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+    return;
+  }
+
   if (event.data?.type === 'HEARTBEAT') {
     const deviceId = event.data.deviceId;
     // Forward heartbeat to server in background (fire-and-forget)
