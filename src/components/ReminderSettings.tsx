@@ -122,12 +122,23 @@ export default function ReminderSettings() {
     const deviceId = localStorage.getItem("daily-why-device-id") || crypto.randomUUID();
     localStorage.setItem("daily-why-device-id", deviceId);
 
+    // Collect device info for identification
+    const deviceInfo = {
+      userAgent: navigator.userAgent,
+      platform: navigator.platform || "unknown",
+      language: navigator.language || "unknown",
+      screenWidth: window.screen.width,
+      screenHeight: window.screen.height,
+      standalone: isStandaloneMode(),
+    };
+
     const res = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         subscription,
         deviceId,
+        deviceInfo,
       }),
     });
 
