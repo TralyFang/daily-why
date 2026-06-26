@@ -142,25 +142,33 @@ export default function ServiceWorkerRegistration() {
 
   return (
     <div
-      className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 animate-slideUpToast"
+      className="fixed bottom-20 left-4 right-4 z-50 flex justify-center animate-slideUpToast"
       role="alert"
       aria-live="polite"
     >
-      <div className="bg-gray-900/95 backdrop-blur-sm text-white px-5 py-3.5 rounded-2xl shadow-xl flex items-center gap-3 max-w-[340px]">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">发现新版本 ✨</p>
-          <p className="text-xs text-gray-300 mt-0.5">点击更新获取最新内容</p>
+      <div className="w-full max-w-sm bg-white/95 backdrop-blur-md border border-gray-200 rounded-2xl shadow-lg px-4 py-3 flex items-center gap-3">
+        {/* Icon */}
+        <div className="w-9 h-9 rounded-full bg-brand-50 flex items-center justify-center flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5 text-brand-500">
+            <path fillRule="evenodd" d="M15.312 11.424a5.5 5.5 0 01-9.379 2.624l-2.06 2.06a.75.75 0 01-1.06-1.06l2.06-2.06A5.5 5.5 0 0115.312 3.17l-1.248 1.248a3.999 3.999 0 00-5.422 5.422L7.28 11.2a.75.75 0 011.06 1.06l1.36-1.36a3.999 3.999 0 005.422-5.422l1.248-1.248a5.5 5.5 0 01-1.06 7.194z" clipRule="evenodd" />
+          </svg>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Text */}
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-gray-900">发现新版本 ✨</p>
+          <p className="text-xs text-gray-500 mt-0.5">点击更新获取最新内容</p>
+        </div>
+        {/* Actions */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
           <button
             onClick={dismissUpdate}
-            className="text-xs text-gray-400 hover:text-gray-200 px-2 py-1.5 rounded-lg transition-colors"
+            className="text-xs text-gray-400 hover:text-gray-600 px-2.5 py-1.5 rounded-lg transition-colors"
           >
             稍后
           </button>
           <button
             onClick={applyUpdate}
-            className="text-xs bg-brand-500 hover:bg-brand-600 text-white px-3 py-1.5 rounded-lg font-medium transition-colors"
+            className="text-xs bg-brand-500 hover:bg-brand-600 text-white px-3.5 py-1.5 rounded-full font-medium transition-colors shadow-sm"
           >
             更新
           </button>

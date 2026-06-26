@@ -49,6 +49,18 @@ function isStandaloneMode(): boolean {
   );
 }
 
+/** Check if push notifications are supported (regardless of standalone mode) */
+function isPushSupported(): boolean {
+  if (typeof window === "undefined") return false;
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+/** Detect if running on a mobile device */
+function isMobileDevice(): boolean {
+  if (typeof window === "undefined") return false;
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
 // ---- component ----
 
 export default function ReminderSettings() {
@@ -73,7 +85,10 @@ export default function ReminderSettings() {
     const c = loadConfig();
     setConfig(c);
     setDraftEnabled(c.enabled);
-    setStandalone(isStandaloneMode());
+    // On mobile: require standalone (PWA installed)
+    // On desktop: only require push support (works in normal browser tab too)
+    const canEnable = isMobileDevice() ? isStandaloneMode() : isPushSupported();
+    setStandalone(canEnable);
     if (c.enabled) checkPermission();
   }, []);
 
