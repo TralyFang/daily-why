@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 const HEARTBEAT_KEY = 'daily-why-heartbeat';
-const UPDATE_CHECK_INTERVAL = 60 * 60 * 1000; // Check for SW updates every 1 hour
+const AUTO_ACTIVATE_DELAY = 30 * 1000; // Auto-activate after 30s of inactivity
 
 function getToday(): string {
   const d = new Date();
@@ -13,15 +13,10 @@ function getToday(): string {
 export default function ServiceWorkerRegistration() {
   const [showUpdateToast, setShowUpdateToast] = useState(false);
   const [waitingWorker, setWaitingWorker] = useState<ServiceWorker | null>(null);
+  const autoActivateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userInteracted = useRef(false);
 
-  // Reload the page when new SW takes control
-  const handleControllerChange = useCallback(() => {
-    // Only reload if we previously showed the update toast (user-triggered)
-    // or if it's a silent update via skipWaiting
-    window.location.reload();
-  }, []);
-
-  // Apply the waiting SW update
+  // Trigger skipWaiting on the waiting SW, then page will reload on controllerchange
   const applyUpdate = useCallback(() => {
     if (waitingWorker) {
       waitingWorker.postMessage({ type: 'SKIP_WAITING' });
@@ -31,28 +26,50 @@ export default function ServiceWorkerRegistration() {
 
   const dismissUpdate = useCallback(() => {
     setShowUpdateToast(false);
+    // User dismissed — don't auto-activate during this session
+    userInteracted.current = true;
+    if (autoActivateTimer.current) {
+      clearTimeout(autoActivateTimer.current);
+      autoActivateTimer.current = null;
+    }
+  }, []);
+
+  // Start auto-activate countdown (activates if user is idle for 30s)
+  const startAutoActivate = useCallback((worker: ServiceWorker) => {
+    if (autoActivateTimer.current) clearTimeout(autoActivateTimer.current);
+
+    autoActivateTimer.current = setTimeout(() => {
+      // Only auto-activate if user hasn't explicitly dismissed
+      if (!userInteracted.current) {
+        worker.postMessage({ type: 'SKIP_WAITING' });
+      }
+    }, AUTO_ACTIVATE_DELAY);
   }, []);
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
 
-    let updateInterval: ReturnType<typeof setInterval> | null = null;
+    const handleControllerChange = () => {
+      window.location.reload();
+    };
+
+    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
 
     navigator.serviceWorker.register('/sw.js').then((reg) => {
       console.log('SW registered:', reg.scope);
 
       // --- Update detection ---
-      // Listen for new SW found (updatefound fires when browser detects a new SW)
       const onUpdateFound = () => {
         const newWorker = reg.installing;
         if (!newWorker) return;
 
         newWorker.addEventListener('statechange', () => {
-          // New SW is installed and waiting to activate
+          // New SW is installed and waiting — this is an update (not first install)
           if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-            // There's an existing controller, so this is an update (not first install)
             setWaitingWorker(newWorker);
             setShowUpdateToast(true);
+            // Start auto-activate countdown
+            startAutoActivate(newWorker);
           }
         });
       };
@@ -63,20 +80,19 @@ export default function ServiceWorkerRegistration() {
       if (reg.waiting && navigator.serviceWorker.controller) {
         setWaitingWorker(reg.waiting);
         setShowUpdateToast(true);
+        startAutoActivate(reg.waiting);
       }
 
-      // --- Periodic update check ---
-      // Proactively check for SW updates every hour
-      updateInterval = setInterval(() => {
-        reg.update().catch(() => {
-          // Silently ignore update check failures (e.g., offline)
-        });
-      }, UPDATE_CHECK_INTERVAL);
-
-      // Also check on page visibility change (user returns to tab/app)
+      // Check on visibility change (user returns to app)
       const onVisibilityChange = () => {
         if (document.visibilityState === 'visible') {
           reg.update().catch(() => {});
+
+          // If there's a waiting worker and user comes back from background,
+          // auto-activate it (they likely won't notice the reload)
+          if (reg.waiting && navigator.serviceWorker.controller && !userInteracted.current) {
+            reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
         }
       };
       document.addEventListener('visibilitychange', onVisibilityChange);
@@ -106,7 +122,7 @@ export default function ServiceWorkerRegistration() {
         }
       }
 
-      // Cleanup on unmount
+      // Cleanup
       return () => {
         reg.removeEventListener('updatefound', onUpdateFound);
         document.removeEventListener('visibilitychange', onVisibilityChange);
@@ -115,14 +131,11 @@ export default function ServiceWorkerRegistration() {
       console.log('SW registration failed:', err);
     });
 
-    // Listen for controller change (new SW activated)
-    navigator.serviceWorker.addEventListener('controllerchange', handleControllerChange);
-
     return () => {
-      if (updateInterval) clearInterval(updateInterval);
+      if (autoActivateTimer.current) clearTimeout(autoActivateTimer.current);
       navigator.serviceWorker.removeEventListener('controllerchange', handleControllerChange);
     };
-  }, [handleControllerChange]);
+  }, [startAutoActivate]);
 
   // Update toast UI
   if (!showUpdateToast) return null;

@@ -14,9 +14,10 @@ const PRE_CACHE_URLS = [
   '/icon.webp',
 ];
 
-// Install: pre-cache static shell, then take over immediately
+// Install: pre-cache static shell, then wait for client to trigger activation
 self.addEventListener('install', (event) => {
-  self.skipWaiting();
+  // Do NOT call skipWaiting() here — let the client decide when to activate
+  // This prevents interrupting the user's current reading session
   event.waitUntil(
     caches.open(STATIC_CACHE).then((cache) => {
       return cache.addAll(PRE_CACHE_URLS);
