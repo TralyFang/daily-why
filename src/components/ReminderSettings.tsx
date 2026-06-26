@@ -215,9 +215,12 @@ export default function ReminderSettings() {
 
   // ---- Debug: long-press to enter debug mode ----
   const handleIconTouchStart = () => {
+    // Note: don't call preventDefault() here — it would block the subsequent click event on mobile
     longPressTriggered.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true;
+      // Haptic feedback if available
+      if (navigator.vibrate) navigator.vibrate(50);
       handleOpenDebug();
     }, 1500);
   };
@@ -227,6 +230,10 @@ export default function ReminderSettings() {
       clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+  };
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent context menu on long-press (mobile)
   };
 
   // ---- Debug actions ----
@@ -376,7 +383,9 @@ export default function ReminderSettings() {
         onMouseDown={handleIconTouchStart}
         onMouseUp={handleIconTouchEnd}
         onMouseLeave={handleIconTouchEnd}
-        className="relative p-2 -mr-1 rounded-full hover:bg-gray-100 transition-colors duration-200"
+        onContextMenu={handleContextMenu}
+        className="relative p-2 -mr-1 rounded-full hover:bg-gray-100 transition-colors duration-200 select-none"
+        style={{ WebkitTouchCallout: 'none', WebkitUserSelect: 'none' }}
         aria-label="设置每日提醒"
       >
         <svg
