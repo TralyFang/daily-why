@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { getContentForDate, getAvailableDates, getExtraContentForDate } from "@/lib/content";
 
+// Disable static caching — content changes daily
+export const dynamic = "force-dynamic";
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date");

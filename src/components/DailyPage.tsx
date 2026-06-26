@@ -117,7 +117,10 @@ export default function DailyPage() {
   // fetch available dates
   const fetchDates = useCallback(async () => {
     try {
-      const res = await fetch("/api/content");
+      // Add today's date as cache-buster to bypass stale SW cache on new day
+      const today = new Date();
+      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+      const res = await fetch(`/api/content?_d=${todayStr}`);
       const data = await res.json();
       if (data.availableDates && data.availableDates.length > 0) {
         const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {

@@ -27,25 +27,39 @@ export function formatDate(date: Date): string {
 }
 
 /**
- * Get today's date as YYYY-MM-DD (local time)
+ * Get today's date as YYYY-MM-DD in Beijing time (UTC+8)
+ * This ensures consistency between server (Cloudflare Worker, UTC)
+ * and client (user's local timezone, likely UTC+8)
  */
 export function getToday(): string {
-  return formatDate(new Date());
+  const now = new Date();
+  // Convert to Beijing time: UTC + 8 hours
+  const beijingTime = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const year = beijingTime.getUTCFullYear();
+  const month = String(beijingTime.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(beijingTime.getUTCDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /**
  * Get dates within the 7-day viewable window
  * Returns [today, yesterday, ..., 7daysAgo] sorted newest first
+ * Uses Beijing time (UTC+8) to match content generation schedule
  */
 export function getValidDates(): string[] {
   const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Convert to Beijing time
+  const beijingMs = now.getTime() + 8 * 60 * 60 * 1000;
+  const beijingToday = new Date(beijingMs);
+  const todayStart = Date.UTC(beijingToday.getUTCFullYear(), beijingToday.getUTCMonth(), beijingToday.getUTCDate());
   const dates: string[] = [];
 
   for (let i = 0; i <= 7; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    dates.push(formatDate(d));
+    const d = new Date(todayStart - i * 24 * 60 * 60 * 1000);
+    const year = d.getUTCFullYear();
+    const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    dates.push(`${year}-${month}-${day}`);
   }
 
   return dates;
