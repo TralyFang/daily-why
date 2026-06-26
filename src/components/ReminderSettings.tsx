@@ -593,9 +593,18 @@ export default function ReminderSettings() {
                       发送心跳
                     </button>
                     <button
+                      onClick={() => {
+                        window.dispatchEvent(new CustomEvent("debug-simulate-update"));
+                        handleCancel();
+                      }}
+                      className="py-3 rounded-xl bg-purple-50 text-sm font-medium text-purple-600 hover:bg-purple-100 transition-colors"
+                    >
+                      模拟更新
+                    </button>
+                    <button
                       onClick={debugClearAll}
                       disabled={debugLoading}
-                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50 col-span-2"
                     >
                       清除数据
                     </button>
