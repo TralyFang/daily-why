@@ -69,13 +69,37 @@ export async function POST(request: Request) {
 
     try {
       const kv = await getKV();
+
       // Check if existing record — preserve createdAt
       const existing = await kv.get(`push:sub:${body.deviceId}`, { type: "json" }) as Record<string, unknown> | null;
       if (existing?.createdAt) {
         record.createdAt = existing.createdAt as string;
       }
+
+      // --- Endpoint deduplication ---
+      // Remove any OTHER deviceId records that share the same endpoint
+      // This happens when a user reinstalls PWA (new deviceId, same push subscription)
+      const endpoint = body.subscription.endpoint;
+      const listResult = await kv.list({ prefix: "push:sub:" });
+      const deletePromises: Promise<void>[] = [];
+      for (const key of listResult.keys) {
+        if (key.name === `push:sub:${body.deviceId}`) continue;
+        // Use metadata or fetch the record to check endpoint
+        const oldRaw = await kv.get(key.name, { type: "json" }) as Record<string, unknown> | null;
+        if (oldRaw) {
+          const oldSub = oldRaw.subscription as Record<string, unknown> | undefined;
+          if (oldSub?.endpoint === endpoint) {
+            deletePromises.push(kv.delete(key.name));
+          }
+        }
+      }
+      if (deletePromises.length > 0) {
+        await Promise.all(deletePromises);
+        console.log(`[push/subscribe] Deduplicated: removed ${deletePromises.length} old record(s) with same endpoint`);
+      }
+
       await kv.put(`push:sub:${body.deviceId}`, JSON.stringify(record));
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, deduplicated: deletePromises.length });
     } catch {
       console.log("[push/subscribe] KV not available, subscription saved locally only");
       return NextResponse.json({ success: true, warning: "kv-unavailable" });
