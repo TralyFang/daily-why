@@ -22,7 +22,8 @@
 	"kv_namespaces": [
 		{
 			"binding": "CONTENT_KV",
-			"id": "de18acc52fdb45b0ab999e9ac3793ba6"
+			"id": "de18acc52fdb45b0ab999e9ac3793ba6",
+			"preview_id": "de18acc52fdb45b0ab999e9ac3793ba6"
 		}
 	],
 	"ai": {
