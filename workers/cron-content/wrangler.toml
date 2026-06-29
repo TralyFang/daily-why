@@ -6,11 +6,7 @@ compatibility_date = "2026-06-20"
 [triggers]
 crons = ["5 16 * * *"]
 
-# Workers AI binding
-[ai]
-binding = "AI"
-
-# KV namespace — same as main app
-[[kv_namespaces]]
-binding = "CONTENT_KV"
-id = "de18acc52fdb45b0ab999e9ac3793ba6"
+# Service binding to the main daily-why worker
+[[services]]
+binding = "MAIN_APP"
+service = "daily-why"

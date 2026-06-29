@@ -71,6 +71,9 @@ daily-why/
 │   ├── _headers                 # Cloudflare 静态资源缓存头
 │   └── icon-*.png/webp          # 应用图标
 ├── workers/
+│   ├── cron-content/            # Cloudflare Cron Worker（定时内容生成触发）
+│   │   ├── worker.js
+│   │   └── wrangler.toml
 │   └── cron-push/               # Cloudflare Cron Worker（定时推送触发）
 │       ├── worker.js
 │       └── wrangler.toml
