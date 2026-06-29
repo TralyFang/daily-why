@@ -32,6 +32,8 @@
 | OpenNext for Cloudflare | Next.js 适配 Cloudflare Workers |
 | Cloudflare Workers | 运行时部署 + Cron 定时推送 |
 | Cloudflare KV | 线上内容存储 + 推送订阅管理 |
+| Cloudflare Workers AI | 每日内容自动生成（Llama 4 Scout） |
+| Vitest | 单元测试与集成测试 |
 
 ## 内容规则
 
@@ -97,6 +99,13 @@ daily-why/
 │       ├── dates.ts             # 日期窗口与标签计算
 │       ├── vapid.ts             # VAPID 公钥常量
 │       └── cloudflare-env.d.ts
+├── tests/                       # 测试文件
+│   ├── setup.ts                 # 测试环境初始化
+│   ├── lib/dates.test.ts        # 日期工具测试
+│   ├── api/content.test.ts      # 内容 API 测试
+│   ├── api/generate.test.ts     # 生成 API 测试
+│   └── sw/cache-strategy.test.ts # SW 缓存策略测试
+├── vitest.config.ts             # Vitest 测试配置
 ├── .github/workflows/deploy.yml # GitHub Actions 自动部署
 ├── wrangler.jsonc               # Workers 与 KV 配置
 ├── open-next.config.ts          # OpenNext 配置
@@ -126,11 +135,75 @@ VAPID_PRIVATE_KEY=你的VAPID私钥
 ```bash
 npm run dev            # 本地开发
 npm run build          # Next.js 构建
+npm test               # 运行所有测试
+npm run test:watch     # 监听模式（开发时推荐）
+npm run test:coverage  # 运行测试并生成覆盖率报告
 npm run cf:build       # OpenNext Cloudflare 构建
 npm run cf:preview     # 本地预览 Cloudflare Worker
 npm run cf:deploy      # 部署主 Worker
+npm run deploy         # 一键构建 + 部署
 npm run cron:deploy    # 部署 Cron Worker（定时推送触发器）
 ```
+
+## 测试
+
+项目使用 Vitest 作为测试框架，测试文件位于 `tests/` 目录。
+
+```bash
+npm test               # 运行所有测试（CI/CD 推荐）
+npm run test:watch     # 监听模式，文件变更自动重跑
+npm run test:coverage  # 生成覆盖率报告
+```
+
+### 测试结构
+
+```text
+tests/
+├── setup.ts                    # 测试环境初始化
+├── lib/
+│   └── dates.test.ts           # 日期工具函数（解析、格式化、时区、有效窗口）
+├── api/
+│   ├── content.test.ts         # /api/content 路由（日期列表、内容获取、错误处理）
+│   └── generate.test.ts        # /api/content/generate 路由（AI 生成、日期参数、幂等）
+└── sw/
+    └── cache-strategy.test.ts  # SW 缓存策略（network-first、离线回退、缓存键）
+```
+
+### 开发规范
+
+每次修改功能后请运行 `npm test` 验证：
+- 改了 `src/lib/dates.ts` → 跑 `dates.test.ts`
+- 改了 API 路由 → 跑 `api/*.test.ts`
+- 改了 SW 缓存逻辑 → 跑 `sw/*.test.ts`
+
+## AI 内容自动生成
+
+内容通过 Cloudflare Workers AI（Llama 4 Scout 17B）自动生成，每天生成 4 篇文章（1 篇主内容 + 3 篇额外内容）。
+
+### 生成接口
+
+```http
+GET /api/content/generate?force=1&date=2026-06-28
+```
+
+| 参数 | 说明 |
+|------|------|
+| `force=1` | 强制重新生成（覆盖已有内容） |
+| `date=YYYY-MM-DD` | 指定生成日期（默认今天，仅支持近 3 天） |
+
+### 调试面板
+
+长按右上角时钟图标 1.5 秒可进入**调试模式**，功能包括：
+
+- 查看设备状态（SW、Push 订阅、Device ID）
+- 选择近 3 天日期手动触发 AI 内容生成
+- 发送测试推送、心跳
+- 模拟 SW 更新
+- 清除本地数据
+
+### 自动触发
+
+生产环境通过 Cron Worker 每天自动调用生成接口，无需手动干预。
 
 ## 内容新增方式
 
