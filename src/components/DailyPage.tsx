@@ -80,6 +80,7 @@ export default function DailyPage() {
   const containerRef = useRef<HTMLDivElement>(null);
   const slideRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const slideWidth = useRef<number>(0);
+  const currentIndexRef = useRef<number>(0);
 
   // "再来一个" state
   const [chanceState, setChanceState] = useState<ChanceState>({ date: "", used: 0 });
@@ -99,6 +100,11 @@ export default function DailyPage() {
   const currentDateInfo = availableDates[currentIndex];
   const showExploreHint = availableDates.length > 3 && currentIndex === 2;
 
+  // Keep currentIndexRef in sync
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
   // init chance state
   useEffect(() => {
     setChanceState(getChanceState());
@@ -114,8 +120,8 @@ export default function DailyPage() {
     }
   }, [chanceState.used]);
 
-  // fetch available dates
-  const fetchDates = useCallback(async () => {
+  // fetch available dates, optionally preserving a target date's position
+  const fetchDates = useCallback(async (preserveDate?: string) => {
     try {
       // Add timestamp as cache-buster to always bypass stale SW cache on refresh
       const res = await fetch(`/api/content?_t=${Date.now()}`);
@@ -137,10 +143,25 @@ export default function DailyPage() {
           return { date, label, weekday: weekdays[targetDate.getDay()] };
         });
         setAvailableDates(dateInfos);
-        setCurrentIndex(0);
+
+        // Restore to the same date position if refreshing, otherwise go to first
+        // If the date no longer exists, fall back to the closest available index
+        let targetIndex = 0;
+        if (preserveDate) {
+          const idx = dateInfos.findIndex(d => d.date === preserveDate);
+          if (idx !== -1) {
+            targetIndex = idx;
+          } else {
+            // Date gone — clamp to the last available index (closest to where user was)
+            targetIndex = Math.min(currentIndexRef.current, dateInfos.length - 1);
+          }
+        }
+        setCurrentIndex(targetIndex);
         setDatesLoaded(true);
-        loadContent(dateInfos[0].date);
-        if (dateInfos.length > 1) loadContent(dateInfos[1].date);
+        loadContent(dateInfos[targetIndex].date);
+        // Prefetch adjacent
+        if (targetIndex > 0) loadContent(dateInfos[targetIndex - 1].date);
+        if (targetIndex < dateInfos.length - 1) loadContent(dateInfos[targetIndex + 1].date);
       } else {
         setErrorDates({ "global": "暂无可用内容" });
         setDatesLoaded(true);
@@ -151,8 +172,9 @@ export default function DailyPage() {
     }
   }, []);
 
-  // refresh handler for PullToRefresh: clear SW API cache + reload
+  // refresh handler for PullToRefresh: clear SW API cache + reload, preserving current tab
   const handleRefresh = useCallback(async () => {
+    const currentDate = availableDates[currentIndex]?.date;
     setContentCache({});
     setErrorDates({});
     setLoadingDates(new Set());
@@ -170,8 +192,8 @@ export default function DailyPage() {
         }
       }
     } catch {}
-    await fetchDates();
-  }, [fetchDates]);
+    await fetchDates(currentDate);
+  }, [fetchDates, availableDates, currentIndex]);
 
   useEffect(() => {
     fetchDates();
