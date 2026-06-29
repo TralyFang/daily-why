@@ -362,6 +362,30 @@ export default function ReminderSettings() {
     setDebugLoading(false);
   };
 
+  const debugGenerateContent = async () => {
+    setDebugLoading(true);
+    try {
+      setDebugInfo(`${debugInfo}\n\n=== 生成内容中... ===\n正在调用 AI 生成今天的 4 篇文章，请耐心等待（约 30-60 秒）...`);
+      const res = await fetch("/api/content/generate?force=1");
+      const data = await res.json();
+      if (data.status === "ok") {
+        const summary = data.results.map((r: { key: string; status: string; length: number; preview: string }) =>
+          `  ${r.key}: ${r.status} (${r.length}字) ${r.preview.substring(0, 40)}...`
+        ).join("\n");
+        setDebugInfo(
+          `${debugInfo}\n\n=== ✅ 内容生成成功 ===\n日期: ${data.today}\n主题: ${data.topics.join(", ")}\n结果:\n${summary}\n\n刷新页面即可看到新内容`
+        );
+      } else {
+        setDebugInfo(
+          `${debugInfo}\n\n=== ❌ 生成失败 ===\n${JSON.stringify(data, null, 2)}`
+        );
+      }
+    } catch (err) {
+      setDebugInfo(`${debugInfo}\n\n=== ❌ 生成失败 ===\n${String(err)}`);
+    }
+    setDebugLoading(false);
+  };
+
   const debugClearAll = () => {
     localStorage.removeItem(STORAGE_KEY);
     localStorage.removeItem("daily-why-device-id");
@@ -624,9 +648,16 @@ export default function ReminderSettings() {
                       模拟更新
                     </button>
                     <button
+                      onClick={debugGenerateContent}
+                      disabled={debugLoading}
+                      className="py-3 rounded-xl bg-green-50 text-sm font-medium text-green-700 hover:bg-green-100 transition-colors disabled:opacity-50"
+                    >
+                      {debugLoading ? "AI 生成中..." : "🤖 生成今日内容"}
+                    </button>
+                    <button
                       onClick={debugClearAll}
                       disabled={debugLoading}
-                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50 col-span-2"
+                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
                     >
                       清除数据
                     </button>

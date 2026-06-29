@@ -25,6 +25,10 @@
 			"id": "de18acc52fdb45b0ab999e9ac3793ba6"
 		}
 	],
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
 	"images": {
 		// Enable image optimization
 		// see https://opennext.js.org/cloudflare/howtos/image

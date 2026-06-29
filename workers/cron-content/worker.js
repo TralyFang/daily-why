@@ -86,7 +86,7 @@ async function generateArticle(env, topic, index, recentTopics) {
 
 请直接输出 Markdown 格式的文章，不要有额外的说明。`;
 
-  const response = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
+  const response = await env.AI.run("@cf/meta/llama-4-scout-17b-16e-instruct", {
     messages: [
       { role: "system", content: "你是一个专业的中文科普作家，擅长用通俗有趣的方式解释复杂的科学问题。" },
       { role: "user", content: prompt },
