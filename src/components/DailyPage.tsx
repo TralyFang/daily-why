@@ -82,6 +82,11 @@ export default function DailyPage() {
   const slideWidth = useRef<number>(0);
   const currentIndexRef = useRef<number>(0);
 
+  // header hide/show on scroll
+  const [headerVisible, setHeaderVisible] = useState<boolean>(true);
+  const lastScrollY = useRef<number>(0);
+  const headerHeight = 104; // approximate header + tabs height
+
   // "再来一个" state
   const [chanceState, setChanceState] = useState<ChanceState>({ date: "", used: 0 });
   const [extraContent, setExtraContent] = useState<string | null>(null);
@@ -257,23 +262,47 @@ export default function DailyPage() {
     return scrollable.scrollTop <= 1;
   }, [currentIndex]);
 
-  // container height
+  // container height — measure current slide and set explicitly for smooth transitions
   const updateContainerHeight = useCallback(() => {
     const currentSlide = slideRefs.current.get(currentIndex);
     if (currentSlide) {
-      setContainerHeight(currentSlide.scrollHeight);
+      // Use offsetHeight for the actual rendered height (not scrollHeight which can be larger)
+      const height = currentSlide.offsetHeight;
+      setContainerHeight(height);
     }
   }, [currentIndex]);
 
   useLayoutEffect(() => {
-    updateContainerHeight();
-  }, [currentIndex, contentCache, showExtraCard, updateContainerHeight]);
+    // Small delay to let content render before measuring
+    const raf = requestAnimationFrame(() => updateContainerHeight());
+    return () => cancelAnimationFrame(raf);
+  }, [currentIndex, contentCache, showExtraCard, extraContent, updateContainerHeight]);
 
   useEffect(() => {
     const onResize = () => updateContainerHeight();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [updateContainerHeight]);
+
+  // scroll-based header hide/show
+  useEffect(() => {
+    const handleScroll = () => {
+      const currentY = window.scrollY;
+      const delta = currentY - lastScrollY.current;
+
+      if (delta > 10 && currentY > headerHeight) {
+        // scrolling down past header — hide
+        setHeaderVisible(false);
+      } else if (delta < -5) {
+        // scrolling up — show
+        setHeaderVisible(true);
+      }
+      lastScrollY.current = currentY;
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // slide width
   useEffect(() => {
@@ -464,34 +493,39 @@ export default function DailyPage() {
       {/* Pull-to-refresh for PWA standalone mode */}
       <PullToRefresh onRefresh={handleRefresh} isContentAtTop={isContentAtTop} />
 
-      {/* Header */}
-      <header className="sticky top-0 z-10 backdrop-blur-md bg-white/80 border-b border-gray-100">
-        <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <img
-              src="/icon.webp"
-              alt="每日一个为什么"
-              className="w-8 h-8 rounded-lg shadow-sm object-cover"
-            />
-            <h1 className="text-lg font-semibold text-gray-900 tracking-tight">
-              每日一个为什么
-            </h1>
+      {/* Header + Tabs wrapper — hides on scroll down, shows on scroll up */}
+      <div
+        className="sticky top-0 z-10 transition-transform duration-300 ease-in-out"
+        style={{ transform: headerVisible ? "translateY(0)" : "translateY(-100%)" }}
+      >
+        <header className="backdrop-blur-md bg-white/80 border-b border-gray-100">
+          <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <img
+                src="/icon.webp"
+                alt="每日一个为什么"
+                className="w-8 h-8 rounded-lg shadow-sm object-cover"
+              />
+              <h1 className="text-lg font-semibold text-gray-900 tracking-tight">
+                每日一个为什么
+              </h1>
+            </div>
+            <div className="text-xs text-gray-400 flex items-center gap-2">
+              <ReminderSettings />
+              {new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}
+            </div>
           </div>
-          <div className="text-xs text-gray-400 flex items-center gap-2">
-            <ReminderSettings />
-            {new Date().toLocaleDateString("zh-CN", { month: "long", day: "numeric" })}
-          </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Date Tabs — only first 3 dates */}
-      <div className="sticky top-[52px] z-10 backdrop-blur-md bg-white/60 border-b border-gray-50">
-        <div className="max-w-lg mx-auto px-4 py-3">
-          <DateTabs
-            dates={mainDates}
-            selectedDate={isExploreMode ? "" : selectedDate}
-            onSelect={handleTabSelect}
-          />
+        {/* Date Tabs — only first 3 dates */}
+        <div className="backdrop-blur-md bg-white/60 border-b border-gray-50">
+          <div className="max-w-lg mx-auto px-4 py-3">
+            <DateTabs
+              dates={mainDates}
+              selectedDate={isExploreMode ? "" : selectedDate}
+              onSelect={handleTabSelect}
+            />
+          </div>
         </div>
       </div>
 
@@ -533,7 +567,7 @@ export default function DailyPage() {
         >
           {/* Carousel track */}
           <div
-            className="flex"
+            className="flex items-start"
             style={{
               transform: `translateX(${carouselOffset}px)`,
               transitionDuration: isDragging ? "0ms" : "300ms",
