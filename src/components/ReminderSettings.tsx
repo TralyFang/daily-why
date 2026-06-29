@@ -77,6 +77,7 @@ export default function ReminderSettings() {
   const [debugMode, setDebugMode] = useState(false);
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [debugLoading, setDebugLoading] = useState(false);
+  const [debugGenDate, setDebugGenDate] = useState<string>(""); // 生成内容的目标日期
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressTriggered = useRef(false);
 
@@ -362,11 +363,27 @@ export default function ReminderSettings() {
     setDebugLoading(false);
   };
 
+  // 获取近3天日期列表
+  const getRecentDates = (): { date: string; label: string }[] => {
+    const dates: { date: string; label: string }[] = [];
+    const labels = ["今天", "昨天", "前天"];
+    for (let i = 0; i < 3; i++) {
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      dates.push({ date: dateStr, label: labels[i] });
+    }
+    return dates;
+  };
+
   const debugGenerateContent = async () => {
     setDebugLoading(true);
+    const targetDate = debugGenDate || "";
+    const dateParam = targetDate ? `&date=${targetDate}` : "";
+    const displayDate = targetDate || "今天";
     try {
-      setDebugInfo(`${debugInfo}\n\n=== 生成内容中... ===\n正在调用 AI 生成今天的 4 篇文章，请耐心等待（约 30-60 秒）...`);
-      const res = await fetch("/api/content/generate?force=1");
+      setDebugInfo(`${debugInfo}\n\n=== 生成内容中... ===\n目标日期: ${displayDate}\n正在调用 AI 生成 4 篇文章，请耐心等待（约 30-60 秒）...`);
+      const res = await fetch(`/api/content/generate?force=1${dateParam}`);
       const data = await res.json();
       if (data.status === "ok") {
         const summary = data.results.map((r: { key: string; status: string; length: number; preview: string }) =>
@@ -648,18 +665,40 @@ export default function ReminderSettings() {
                       模拟更新
                     </button>
                     <button
-                      onClick={debugGenerateContent}
-                      disabled={debugLoading}
-                      className="py-3 rounded-xl bg-green-50 text-sm font-medium text-green-700 hover:bg-green-100 transition-colors disabled:opacity-50"
-                    >
-                      {debugLoading ? "AI 生成中..." : "🤖 生成今日内容"}
-                    </button>
-                    <button
                       onClick={debugClearAll}
                       disabled={debugLoading}
-                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50"
+                      className="py-3 rounded-xl bg-red-50 text-sm font-medium text-red-600 hover:bg-red-100 transition-colors disabled:opacity-50 col-span-2"
                     >
                       清除数据
+                    </button>
+                  </div>
+
+                  {/* AI 内容生成区 — 支持选择近3天日期 */}
+                  <div className="mb-4 bg-green-50 border border-green-200 rounded-xl p-4">
+                    <p className="text-sm font-medium text-green-800 mb-2">🤖 AI 生成内容</p>
+                    <div className="flex gap-2 mb-3">
+                      {getRecentDates().map(({ date, label }) => (
+                        <button
+                          key={date}
+                          onClick={() => setDebugGenDate(date)}
+                          className={`flex-1 py-2 rounded-lg text-xs font-medium transition-colors ${
+                            debugGenDate === date
+                              ? "bg-green-600 text-white"
+                              : "bg-white text-green-700 border border-green-300 hover:bg-green-100"
+                          }`}
+                        >
+                          {label}
+                          <br />
+                          <span className="text-[10px] opacity-70">{date.slice(5)}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <button
+                      onClick={debugGenerateContent}
+                      disabled={debugLoading || !debugGenDate}
+                      className="w-full py-3 rounded-xl bg-green-600 text-sm font-medium text-white hover:bg-green-700 transition-colors disabled:opacity-50"
+                    >
+                      {debugLoading ? "AI 生成中..." : `生成 ${debugGenDate ? debugGenDate : "请先选择日期"} 的内容`}
                     </button>
                   </div>
 

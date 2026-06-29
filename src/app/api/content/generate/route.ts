@@ -74,6 +74,7 @@ function validateContent(content: string): boolean {
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const forceRegenerate = searchParams.get("force") === "1";
+  const dateParam = searchParams.get("date"); // 支持指定日期，如 ?date=2026-06-28
 
   try {
     const ctx = await getCloudflareContext({ async: true });
@@ -89,7 +90,8 @@ export async function GET(request: Request) {
       );
     }
 
-    const today = getBeijingToday();
+    // 支持指定日期，默认今天
+    const today = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : getBeijingToday();
 
     // Check if content already exists
     if (!forceRegenerate) {
