@@ -117,10 +117,8 @@ export default function DailyPage() {
   // fetch available dates
   const fetchDates = useCallback(async () => {
     try {
-      // Add today's date as cache-buster to bypass stale SW cache on new day
-      const today = new Date();
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      const res = await fetch(`/api/content?_d=${todayStr}`);
+      // Add timestamp as cache-buster to always bypass stale SW cache on refresh
+      const res = await fetch(`/api/content?_t=${Date.now()}`);
       const data = await res.json();
       if (data.availableDates && data.availableDates.length > 0) {
         const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {
@@ -153,7 +151,7 @@ export default function DailyPage() {
     }
   }, []);
 
-  // refresh handler for PullToRefresh: clear cache + reload
+  // refresh handler for PullToRefresh: clear SW API cache + reload
   const handleRefresh = useCallback(async () => {
     setContentCache({});
     setErrorDates({});
@@ -163,6 +161,15 @@ export default function DailyPage() {
     setShowExtraCard(false);
     setExtraError(null);
     setChanceState(getChanceState());
+    // Clear Service Worker API cache to ensure fresh data
+    try {
+      const cacheNames = await caches.keys();
+      for (const name of cacheNames) {
+        if (name.includes("api")) {
+          await caches.delete(name);
+        }
+      }
+    } catch {}
     await fetchDates();
   }, [fetchDates]);
 
@@ -193,7 +200,7 @@ export default function DailyPage() {
     if (contentCache[date] || loadingDates.has(date)) return;
     setLoadingDates(prev => new Set([...prev, date]));
     try {
-      const res = await fetch(`/api/content?date=${date}`);
+      const res = await fetch(`/api/content?date=${date}&_t=${Date.now()}`);
       const data = await res.json();
       if (data.content) {
         setContentCache(prev => ({ ...prev, [date]: data.content }));

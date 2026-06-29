@@ -57,63 +57,33 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API content requests — stale-while-revalidate
-  // Return cached first (fast), then update cache from network in background.
-  // When data changes, notify all clients so the page can refresh itself.
+  // API content requests — network-first with offline fallback
+  // Always fetch fresh data from server; only use cache when offline.
   if (url.pathname.startsWith('/api/content')) {
     event.respondWith(
-      caches.open(API_CACHE).then(async (cache) => {
-        const cached = await cache.match(request);
-
-        // Start network fetch in background (do NOT await before responding)
-        const networkPromise = fetch(request).then(async (response) => {
-          if (response.ok) {
-            const oldBody = cached ? await cached.clone().text() : '';
-            const newBody = await response.clone().text();
-
-            // Update cache
-            cache.put(request, new Response(newBody, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: response.headers,
-            }));
-
-            // If content changed, notify clients to refresh
-            if (oldBody && oldBody !== newBody) {
-              const clients = await self.clients.matchAll({ type: 'window' });
-              clients.forEach((client) => {
-                client.postMessage({ type: 'CONTENT_UPDATED', url: request.url });
-              });
-            }
-
-            // Also cache individual date content requests (warm the cache)
-            if (!url.searchParams.has('date') && !url.searchParams.has('type')) {
-              try {
-                const data = JSON.parse(newBody);
-                if (data.availableDates) {
-                  for (const date of data.availableDates) {
-                    const dateUrl = new URL(request.url);
-                    dateUrl.searchParams.set('date', date);
-                    fetch(dateUrl).then((r) => {
-                      if (r.ok) cache.put(dateUrl.toString(), r.clone());
-                    }).catch(() => {});
-                  }
-                }
-              } catch {}
-            }
-          }
-          return response;
-        }).catch(() => null);
-
-        // Return cached response immediately if available
+      fetch(request).then(async (response) => {
+        if (response.ok) {
+          // Cache the fresh response for offline use
+          const cache = await caches.open(API_CACHE);
+          // Strip cache-buster params for consistent cache keys
+          const cacheUrl = new URL(request.url);
+          cacheUrl.searchParams.delete('_t');
+          cacheUrl.searchParams.delete('_d');
+          cache.put(cacheUrl.toString(), response.clone());
+        }
+        return response;
+      }).catch(async () => {
+        // Network failed — try cache (offline fallback)
+        const cache = await caches.open(API_CACHE);
+        const cacheUrl = new URL(request.url);
+        cacheUrl.searchParams.delete('_t');
+        cacheUrl.searchParams.delete('_d');
+        const cached = await cache.match(cacheUrl.toString());
         if (cached) return cached;
-
-        // No cache — wait for network
-        const response = await networkPromise;
-        if (response) return response;
-
-        // Offline and no cache — return empty content
-        return new Response('', { status: 503, statusText: 'Offline' });
+        return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        });
       })
     );
     return;
