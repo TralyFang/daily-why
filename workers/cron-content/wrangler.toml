@@ -1,0 +1,16 @@
+name = "daily-why-cron-content"
+main = "worker.js"
+compatibility_date = "2026-06-20"
+
+# Run at 00:05 Beijing time (UTC 16:05 previous day)
+[triggers]
+crons = ["5 16 * * *"]
+
+# Workers AI binding
+[ai]
+binding = "AI"
+
+# KV namespace — same as main app
+[[kv_namespaces]]
+binding = "CONTENT_KV"
+id = "de18acc52fdb45b0ab999e9ac3793ba6"
