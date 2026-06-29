@@ -11,6 +11,8 @@ jobs:
     name: Build & Deploy
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -24,25 +26,40 @@ jobs:
       - name: Inject SW version (git commit hash)
         run: sed -i "s/__SW_VERSION__/$(git rev-parse --short HEAD)/" public/sw.js
 
-      - name: Build (OpenNext for Cloudflare)
-        run: npm run cf:build
+      - name: Build & Deploy Main Worker
+        run: npm run deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Deploy Main Worker to Cloudflare Workers
-        run: npx wrangler deploy
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      # Cron Workers — only deploy when their files change
+      - name: Check cron-push changes
+        id: cron_push
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "^workers/cron-push/"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check cron-content changes
+        id: cron_content
+        run: |
+          if git diff --name-only HEAD~1 HEAD | grep -q "^workers/cron-content/"; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
 
       - name: Deploy Cron Push Worker
+        if: steps.cron_push.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: cd workers/cron-push && npx wrangler deploy --config wrangler.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
       - name: Deploy Cron Content Worker
+        if: steps.cron_content.outputs.changed == 'true' || github.event_name == 'workflow_dispatch'
         run: cd workers/cron-content && npx wrangler deploy --config wrangler.toml
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
