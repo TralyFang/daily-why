@@ -381,8 +381,15 @@ export default function ReminderSettings() {
     const targetDate = debugGenDate || "";
     const dateParam = targetDate ? `&date=${targetDate}` : "";
     const displayDate = targetDate || "今天";
+    // 判断是否当天：非当天只生成1篇主内容
+    const todayStr = (() => {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    const isToday = !targetDate || targetDate === todayStr;
+    const articleDesc = isToday ? "4 篇文章（1主+3extra）" : "1 篇主内容";
     try {
-      setDebugInfo(`${debugInfo}\n\n=== 生成内容中... ===\n目标日期: ${displayDate}\n正在调用 AI 生成 4 篇文章，请耐心等待（约 30-60 秒）...`);
+      setDebugInfo(`${debugInfo}\n\n=== 生成内容中... ===\n目标日期: ${displayDate}\n正在调用 AI 生成 ${articleDesc}，请耐心等待（约 ${isToday ? "30-60" : "10-20"} 秒）...`);
       const res = await fetch(`/api/content/generate?force=1${dateParam}`);
       const data = await res.json();
       if (data.status === "ok") {

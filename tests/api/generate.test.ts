@@ -1,8 +1,8 @@
 /**
  * /api/content/generate API 路由逻辑测试
- * 测试日期参数、强制重新生成、内容验证等
+ * 测试日期参数、强制重新生成、非当天只生成1篇等
  */
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock KV store — must use inline values in vi.mock factory (hoisted)
 const mockKV: Record<string, string> = {};
@@ -30,7 +30,36 @@ vi.mock("@opennextjs/cloudflare", () => ({
 import { GET } from "@/app/api/content/generate/route";
 
 describe("/api/content/generate GET", () => {
-  it("支持 date 参数指定生成日期", async () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // 设置北京时间为 2026-06-29（UTC 02:00 = 北京 10:00）
+    vi.setSystemTime(new Date("2026-06-29T02:00:00Z"));
+    // 清空 mockKV
+    Object.keys(mockKV).forEach(k => delete mockKV[k]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("当天生成 4 篇文章（1主+3extra）", async () => {
+    const req = new Request(
+      "http://localhost/api/content/generate?force=1&date=2026-06-29"
+    );
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.status).toBe("ok");
+    expect(data.today).toBe("2026-06-29");
+    expect(data.results).toHaveLength(4);
+    expect(data.results[0].key).toBe("2026-06-29");
+    expect(data.results[1].key).toBe("2026-06-29-extra-1");
+    expect(data.results[2].key).toBe("2026-06-29-extra-2");
+    expect(data.results[3].key).toBe("2026-06-29-extra-3");
+  });
+
+  it("非当天只生成 1 篇主内容（无extra）", async () => {
     const req = new Request(
       "http://localhost/api/content/generate?force=1&date=2026-06-28"
     );
@@ -38,11 +67,13 @@ describe("/api/content/generate GET", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.today).toBe("2026-06-28");
     expect(data.status).toBe("ok");
+    expect(data.today).toBe("2026-06-28");
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].key).toBe("2026-06-28");
   });
 
-  it("无效日期格式回退到今天", async () => {
+  it("无效日期格式回退到今天（生成4篇）", async () => {
     const req = new Request(
       "http://localhost/api/content/generate?force=1&date=invalid"
     );
@@ -50,31 +81,30 @@ describe("/api/content/generate GET", () => {
     const data = await res.json();
 
     expect(res.status).toBe(200);
-    expect(data.today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
-  });
-
-  it("生成 4 篇文章写入 KV", async () => {
-    const req = new Request(
-      "http://localhost/api/content/generate?force=1&date=2026-06-27"
-    );
-    const res = await GET(req);
-    const data = await res.json();
-
+    expect(data.today).toBe("2026-06-29");
     expect(data.results).toHaveLength(4);
-    expect(data.results[0].key).toBe("2026-06-27");
-    expect(data.results[1].key).toBe("2026-06-27-extra-1");
-    expect(data.results[2].key).toBe("2026-06-27-extra-2");
-    expect(data.results[3].key).toBe("2026-06-27-extra-3");
   });
 
   it("已有内容且不 force 时跳过", async () => {
-    mockKV["2026-06-26"] = "# 已有内容";
+    mockKV["2026-06-28"] = "# 已有内容";
     const req = new Request(
-      "http://localhost/api/content/generate?date=2026-06-26"
+      "http://localhost/api/content/generate?date=2026-06-28"
     );
     const res = await GET(req);
     const data = await res.json();
 
     expect(data.status).toBe("skipped");
+  });
+
+  it("force=1 时即使已有内容也重新生成", async () => {
+    mockKV["2026-06-28"] = "# 旧内容";
+    const req = new Request(
+      "http://localhost/api/content/generate?force=1&date=2026-06-28"
+    );
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(data.status).toBe("ok");
+    expect(data.results).toHaveLength(1);
   });
 });

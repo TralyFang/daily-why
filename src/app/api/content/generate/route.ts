@@ -12,7 +12,8 @@ const TOPICS = [
   "心理学", "经济学", "数学趣味", "气象学", "材料科学",
 ];
 
-const KV_TTL = 7 * 24 * 60 * 60; // 7 days
+const KV_TTL_MAIN = 7 * 24 * 60 * 60; // 主内容 7 days
+const KV_TTL_EXTRA = 1 * 24 * 60 * 60; // 副内容 1 day
 
 function getBeijingToday(): string {
   const now = new Date();
@@ -92,6 +93,10 @@ export async function GET(request: Request) {
 
     // 支持指定日期，默认今天
     const today = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : getBeijingToday();
+    const actualToday = getBeijingToday();
+    // 非当天只生成1篇主内容（不需要extra）
+    const isToday = today === actualToday;
+    const articleCount = isToday ? 4 : 1;
 
     // Check if content already exists
     if (!forceRegenerate) {
@@ -105,13 +110,14 @@ export async function GET(request: Request) {
       }
     }
 
-    // Pick 4 different topics
-    const selectedTopics = pickRandom(TOPICS, 4);
-    const keys = [today, `${today}-extra-1`, `${today}-extra-2`, `${today}-extra-3`];
+    // Pick topics based on article count (today=4, other days=1)
+    const selectedTopics = pickRandom(TOPICS, articleCount);
+    const allKeys = [today, `${today}-extra-1`, `${today}-extra-2`, `${today}-extra-3`];
+    const keys = allKeys.slice(0, articleCount);
     const results: { key: string; content: string; status: string }[] = [];
 
-    // Generate 4 articles
-    for (let i = 0; i < 4; i++) {
+    // Generate articles
+    for (let i = 0; i < articleCount; i++) {
       let content = "";
       let attempts = 0;
       let lastError = "";
@@ -135,8 +141,9 @@ export async function GET(request: Request) {
         results.push({ key: keys[i], content, status: "ok" });
       }
 
-      // Write to KV immediately
-      await kv.put(keys[i], content, { expirationTtl: KV_TTL });
+      // Write to KV: 主内容 7 天，副内容 1 天
+      const ttl = i === 0 ? KV_TTL_MAIN : KV_TTL_EXTRA;
+      await kv.put(keys[i], content, { expirationTtl: ttl });
     }
 
     return NextResponse.json({

@@ -18,7 +18,8 @@ const TOPICS = [
   "心理学", "经济学", "数学趣味", "气象学", "材料科学",
 ];
 
-const KV_TTL = 7 * 24 * 60 * 60; // 7 days in seconds
+const KV_TTL_MAIN = 7 * 24 * 60 * 60; // 主内容 7 days
+const KV_TTL_EXTRA = 1 * 24 * 60 * 60; // 副内容 1 day
 
 /**
  * Get today's date in Beijing time (UTC+8) as YYYY-MM-DD
@@ -158,10 +159,12 @@ async function generateContent(env) {
     results.push({ key: keys[i], content });
   }
 
-  // Write all 4 articles to KV
-  for (const { key, content } of results) {
-    await env.CONTENT_KV.put(key, content, { expirationTtl: KV_TTL });
-    console.log(`[cron-content] Written KV key: ${key} (${content.length} chars)`);
+  // Write all 4 articles to KV (主内容7天，副内容1天)
+  for (let i = 0; i < results.length; i++) {
+    const { key, content } = results[i];
+    const ttl = i === 0 ? KV_TTL_MAIN : KV_TTL_EXTRA;
+    await env.CONTENT_KV.put(key, content, { expirationTtl: ttl });
+    console.log(`[cron-content] Written KV key: ${key} (${content.length} chars, TTL: ${ttl}s)`);
   }
 
   console.log(`[cron-content] ✅ All 4 articles generated and stored for ${today}`);
