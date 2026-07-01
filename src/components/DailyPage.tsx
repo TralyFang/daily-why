@@ -87,6 +87,7 @@ export default function DailyPage() {
   const lastScrollY = useRef<number>(0);
   const headerHeight = 104; // approximate header + tabs height
 
+
   // "再来一个" state
   const [chanceState, setChanceState] = useState<ChanceState>({ date: "", used: 0 });
   const [extraContent, setExtraContent] = useState<string | null>(null);
@@ -94,6 +95,10 @@ export default function DailyPage() {
   const [extraError, setExtraError] = useState<string | null>(null);
   const [showExtraCard, setShowExtraCard] = useState<boolean>(false);
   const [countdown, setCountdown] = useState<number>(getSecondsUntilMidnight());
+
+  // Settings panel state
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [clearingCache, setClearingCache] = useState<boolean>(false);
 
   // derived
   const isExploreMode = currentIndex > 2;
@@ -128,8 +133,7 @@ export default function DailyPage() {
   // fetch available dates, optionally preserving a target date's position
   const fetchDates = useCallback(async (preserveDate?: string) => {
     try {
-      // Add timestamp as cache-buster to always bypass stale SW cache on refresh
-      const res = await fetch(`/api/content?_t=${Date.now()}`);
+      const res = await fetch(`/api/content`);
       const data = await res.json();
       if (data.availableDates && data.availableDates.length > 0) {
         const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {
@@ -163,8 +167,10 @@ export default function DailyPage() {
         }
         setCurrentIndex(targetIndex);
         setDatesLoaded(true);
-        loadContent(dateInfos[targetIndex].date);
-        // Prefetch adjacent
+        // When preserveDate is set, it's a refresh — force reload current content
+        const forceRefresh = !!preserveDate;
+        loadContent(dateInfos[targetIndex].date, forceRefresh);
+        // Prefetch adjacent (no force)
         if (targetIndex > 0) loadContent(dateInfos[targetIndex - 1].date);
         if (targetIndex < dateInfos.length - 1) loadContent(dateInfos[targetIndex + 1].date);
       } else {
@@ -172,33 +178,50 @@ export default function DailyPage() {
         setDatesLoaded(true);
       }
     } catch {
-      setErrorDates({ "global": "加载失败，请刷新重试" });
+      setErrorDates(prev => ({ ...prev, "global": "加载失败，请刷新重试" }));
       setDatesLoaded(true);
     }
   }, []);
 
-  // refresh handler for PullToRefresh: clear SW API cache + reload, preserving current tab
+  // refresh handler for PullToRefresh: reload content, preserving current tab
   const handleRefresh = useCallback(async () => {
     const currentDate = availableDates[currentIndex]?.date;
-    setContentCache({});
-    setErrorDates({});
-    setLoadingDates(new Set());
-    setDatesLoaded(false);
     setExtraContent(null);
     setShowExtraCard(false);
     setExtraError(null);
     setChanceState(getChanceState());
-    // Clear Service Worker API cache to ensure fresh data
+    await fetchDates(currentDate);
+  }, [fetchDates, availableDates, currentIndex]);
+
+  // Clear all caches: SW cache + localStorage + in-memory state
+  const handleClearCache = useCallback(async () => {
+    setClearingCache(true);
     try {
+      // 1. Clear SW API cache
       const cacheNames = await caches.keys();
       for (const name of cacheNames) {
         if (name.includes("api")) {
           await caches.delete(name);
         }
       }
-    } catch {}
-    await fetchDates(currentDate);
-  }, [fetchDates, availableDates, currentIndex]);
+      // 2. Clear localStorage data
+      localStorage.removeItem(CHANCE_STORAGE_KEY);
+      // 3. Clear in-memory state
+      setContentCache({});
+      setErrorDates({});
+      setExtraContent(null);
+      setShowExtraCard(false);
+      setExtraError(null);
+      setChanceState(getChanceState());
+      // 4. Reload fresh data
+      await fetchDates();
+    } catch {
+      // silently fail
+    } finally {
+      setClearingCache(false);
+      setShowSettings(false);
+    }
+  }, [fetchDates]);
 
   useEffect(() => {
     fetchDates();
@@ -222,15 +245,25 @@ export default function DailyPage() {
     return () => navigator.serviceWorker.removeEventListener("message", handler);
   }, [handleRefresh]);
 
-  // load content (with cache)
-  const loadContent = useCallback(async (date: string) => {
-    if (contentCache[date] || loadingDates.has(date)) return;
+  // load content (with cache), forceRefresh bypasses cache and updates SW cache
+  const loadContent = useCallback(async (date: string, forceRefresh = false) => {
+    if (!forceRefresh && (contentCache[date] || loadingDates.has(date))) return;
+    if (loadingDates.has(date)) return;
     setLoadingDates(prev => new Set([...prev, date]));
     try {
-      const res = await fetch(`/api/content?date=${date}&_t=${Date.now()}`);
+      const url = forceRefresh
+        ? `/api/content?date=${date}&_refresh=1`
+        : `/api/content?date=${date}`;
+      const res = await fetch(url);
       const data = await res.json();
       if (data.content) {
         setContentCache(prev => ({ ...prev, [date]: data.content }));
+        // Clear any previous error for this date
+        setErrorDates(prev => {
+          const next = { ...prev };
+          delete next[date];
+          return next;
+        });
       } else {
         setErrorDates(prev => ({ ...prev, [date]: data.error || "该日期暂无内容" }));
       }
@@ -284,6 +317,7 @@ export default function DailyPage() {
     return () => window.removeEventListener("resize", onResize);
   }, [updateContainerHeight]);
 
+
   // scroll-based header hide/show
   useEffect(() => {
     const handleScroll = () => {
@@ -297,6 +331,7 @@ export default function DailyPage() {
         // scrolling up — show
         setHeaderVisible(true);
       }
+
       lastScrollY.current = currentY;
     };
 
@@ -323,22 +358,31 @@ export default function DailyPage() {
     directionLock.current = "undetermined";
   }, []);
 
-  // "再来一个" handler
+  // "再来一个" handler: collapse → fetch → expand (one-click flow)
   const handleExtraClick = async () => {
     if (chanceState.used >= MAX_CHANCES) return;
     if (extraLoading) return;
-    setShowExtraCard(false);
-    setExtraContent(null);
+
+    // Step 1: Collapse current extra card (with animation time)
+    if (showExtraCard) {
+      setShowExtraCard(false);
+      // Wait for collapse animation to finish
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
+
     setExtraError(null);
     const nextSlot = chanceState.used + 1;
     const todayDate = availableDates[0]?.date || chanceState.date;
     const extraKey = `${todayDate}-extra-${nextSlot}`;
+
+    // Step 2: Fetch next content
     setExtraLoading(true);
     try {
       const res = await fetch(`/api/content?date=${extraKey}`);
       const data = await res.json();
       if (data.content) {
         setExtraContent(data.content);
+        // Step 3: Expand new content
         setShowExtraCard(true);
         const newState = { date: chanceState.date, used: nextSlot };
         setChanceState(newState);
@@ -498,14 +542,20 @@ export default function DailyPage() {
         className="sticky top-0 z-10 transition-transform duration-300 ease-in-out"
         style={{ transform: headerVisible ? "translateY(0)" : "translateY(-100%)" }}
       >
-        <header className="backdrop-blur-md bg-white/80 border-b border-gray-100">
+        <header className="backdrop-blur-md bg-white/80 border-b border-gray-100" style={{ paddingTop: 'env(safe-area-inset-top)' }}>
           <div className="max-w-lg mx-auto px-4 py-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <img
-                src="/icon.webp"
-                alt="每日一个为什么"
-                className="w-8 h-8 rounded-lg shadow-sm object-cover"
-              />
+              <button
+                onClick={() => setShowSettings(true)}
+                className="w-8 h-8 rounded-lg shadow-sm overflow-hidden active:scale-95 transition-transform"
+                aria-label="打开设置"
+              >
+                <img
+                  src="/icon.webp"
+                  alt="每日一个为什么"
+                  className="w-full h-full object-cover"
+                />
+              </button>
               <h1 className="text-lg font-semibold text-gray-900 tracking-tight">
                 每日一个为什么
               </h1>
@@ -667,7 +717,12 @@ export default function DailyPage() {
                               <div className="select-text markdown-content">
                                 <MarkdownRenderer content={extraContent} />
                               </div>
-                              <div className="flex items-center justify-center gap-1.5 mt-4 pt-3 border-t border-gray-100">
+                              <div
+                                className={`flex items-center justify-center gap-1.5 mt-4 pt-3 border-t border-gray-100 ${
+                                  remaining > 0 ? "cursor-pointer active:opacity-70" : ""
+                                }`}
+                                onClick={remaining > 0 ? handleExtraClick : undefined}
+                              >
                                 {[0, 1, 2].map(i => (
                                   <div
                                     key={i}
@@ -677,7 +732,7 @@ export default function DailyPage() {
                                   />
                                 ))}
                                 <span className="text-xs text-gray-400 ml-1.5">
-                                  还能再来 {remaining} 次
+                                  {remaining > 0 ? `还能再来 ${remaining} 次 →` : "今日次数已用完"}
                                 </span>
                               </div>
                             </div>
@@ -744,6 +799,63 @@ export default function DailyPage() {
           内容每天更新 · 仅保留近7天 · 左右滑动切换 · 用好奇心点亮每一天
         </p>
       </footer>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm animate-fadeIn"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowSettings(false); }}
+        >
+          <div className="w-full max-w-lg bg-white rounded-t-3xl shadow-2xl animate-slideUpPrompt overscroll-contain">
+            {/* Handle bar */}
+            <div className="flex justify-center pt-3 pb-1">
+              <div className="w-10 h-1 bg-gray-300 rounded-full" />
+            </div>
+
+            {/* Title */}
+            <div className="px-6 pb-4">
+              <h2 className="text-xl font-semibold text-gray-900 text-center">设置</h2>
+            </div>
+
+            {/* Content */}
+            <div className="px-6 pb-6">
+              {/* Clear cache */}
+              <div className="bg-gray-50 rounded-xl px-4 py-4 mb-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <span className="text-sm text-gray-700 font-medium">清除缓存</span>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      清除所有本地缓存数据并重新加载
+                    </p>
+                  </div>
+                  <button
+                    onClick={handleClearCache}
+                    disabled={clearingCache}
+                    className="px-4 py-2 rounded-xl text-sm font-medium bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
+                  >
+                    {clearingCache ? (
+                      <div className="w-4 h-4 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" />
+                    ) : (
+                      "清除"
+                    )}
+                  </button>
+                </div>
+              </div>
+
+              {/* Close button */}
+              <button
+                onClick={() => setShowSettings(false)}
+                className="w-full py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                关闭
+              </button>
+            </div>
+
+            {/* Safe area padding for iPhone */}
+            <div className="h-[env(safe-area-inset-bottom,20px)]" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

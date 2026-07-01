@@ -61,6 +61,35 @@ function isMobileDevice(): boolean {
   return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 }
 
+/** Detect if running on iOS */
+function isIOS(): boolean {
+  if (typeof window === "undefined") return false;
+  return /iPhone|iPad|iPod/i.test(navigator.userAgent);
+}
+
+/** Detect if running on Android */
+function isAndroid(): boolean {
+  if (typeof window === "undefined") return false;
+  return /Android/i.test(navigator.userAgent);
+}
+
+/** Try to open system notification settings */
+function openSystemNotificationSettings(): boolean {
+  // iOS: no reliable URL scheme to open notification settings from PWA
+  // Android: intent:// schemes don't work from web
+  // Best we can do is show instructions. On some Android browsers, we can try:
+  if (isAndroid()) {
+    // Some Android browsers/PWAs support this intent URL
+    try {
+      window.open('intent:#Intent;action=android.settings.APP_NOTIFICATION_SETTINGS;end', '_blank');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 // ---- component ----
 
 export default function ReminderSettings() {
@@ -178,24 +207,76 @@ export default function ReminderSettings() {
     } catch {}
   };
 
+  // Handle toggle — request permission immediately on user gesture (critical for iOS)
+  const handleToggle = async () => {
+    const newValue = !draftEnabled;
+
+    if (newValue) {
+      // Turning ON: request permission immediately in the user gesture callstack
+      if (!("Notification" in window)) {
+        setSaveError("此浏览器不支持通知功能");
+        return;
+      }
+
+      let perm = Notification.permission;
+      if (perm === "default") {
+        // This MUST be the first await after user gesture for iOS to show the system prompt
+        perm = await Notification.requestPermission();
+      }
+
+      if (perm === "denied") {
+        setPermissionDenied(true);
+        // Don't toggle the switch
+        return;
+      }
+
+      if (perm !== "granted") {
+        // User dismissed without granting (e.g. closed the prompt)
+        setSaveError("未获得通知权限，请重试或在系统设置中开启");
+        return;
+      }
+
+      // Permission granted
+      setPermissionDenied(false);
+      setSaveError(null);
+    }
+
+    setDraftEnabled(newValue);
+  };
+
   // Handle save
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
     try {
       if (draftEnabled) {
-        let perm = Notification.permission;
-        if (perm === "default") {
-          perm = await Notification.requestPermission();
-        }
-
+        // Double-check permission (may have been revoked between toggle and save)
+        const perm = Notification.permission;
         if (perm !== "granted") {
           setPermissionDenied(true);
+          setSaving(false);
           return;
         }
 
         setPermissionDenied(false);
         await subscribe();
+
+        // Verify notification channel works by sending a test notification
+        try {
+          const registration = await navigator.serviceWorker.ready;
+          await registration.showNotification("提醒已开启", {
+            body: "每天 10:30 将收到新内容推送",
+            icon: "/icon-192.png",
+            tag: "reminder-test",
+            requireInteraction: false,
+          });
+        } catch {
+          // Notification channel may be blocked at system level (Android)
+          setSaveError("通知可能被系统拦截，请在系统设置中检查通知权限");
+          setDraftEnabled(false);
+          setSaving(false);
+          return;
+        }
       } else {
         await unsubscribe();
       }
@@ -212,6 +293,22 @@ export default function ReminderSettings() {
       console.error("Reminder save failed:", err);
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Handle open system settings / re-check permission
+  const handleOpenSettings = async () => {
+    if (isAndroid()) {
+      openSystemNotificationSettings();
+    }
+    // After user claims they enabled it, re-check the permission
+    // Small delay for Android to let the user come back from settings
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const perm = checkPermission();
+    if (perm === "granted") {
+      setPermissionDenied(false);
+      setSaveError(null);
+      setDraftEnabled(true);
     }
   };
 
@@ -407,7 +504,7 @@ export default function ReminderSettings() {
                       </p>
                     </div>
                     <button
-                      onClick={() => setDraftEnabled(!draftEnabled)}
+                      onClick={handleToggle}
                       disabled={!standalone}
                       className={`relative w-12 h-7 rounded-full transition-colors duration-300 flex-shrink-0 ${
                         draftEnabled ? "bg-brand-500" : "bg-gray-300"
@@ -421,7 +518,7 @@ export default function ReminderSettings() {
                     </button>
                   </div>
 
-                  {permissionDenied && draftEnabled && (
+                  {permissionDenied && (
                     <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 mb-4">
                       <div className="flex items-start gap-2">
                         <svg
@@ -437,15 +534,43 @@ export default function ReminderSettings() {
                           />
                         </svg>
                         <div className="flex-1">
-                          <p className="text-sm text-amber-800 font-medium mb-2">
-                            通知权限已被关闭
+                          <p className="text-sm text-amber-800 font-medium mb-1">
+                            通知权限未开启
                           </p>
                           <p className="text-xs text-amber-700 leading-relaxed mb-2">
-                            请在系统设置中开启通知权限，否则提醒无法送达。
+                            通知权限已被拒绝或关闭，需要在系统设置中手动开启后才能使用提醒功能。
                           </p>
-                          <p className="text-xs text-amber-600 leading-relaxed">
-                            iOS: 设置 → 通知 → 每日一个为什么 → 允许通知
-                          </p>
+                          {isIOS() ? (
+                            <div className="bg-white/60 rounded-lg px-3 py-2 mb-2">
+                              <p className="text-xs text-amber-800 font-medium mb-1">📱 iOS 操作步骤：</p>
+                              <ol className="text-xs text-amber-700 leading-relaxed list-decimal list-inside space-y-0.5">
+                                <li>打开「设置」App</li>
+                                <li>找到「每日一个为什么」</li>
+                                <li>点击「通知」</li>
+                                <li>开启「允许通知」</li>
+                              </ol>
+                            </div>
+                          ) : isAndroid() ? (
+                            <div className="bg-white/60 rounded-lg px-3 py-2 mb-2">
+                              <p className="text-xs text-amber-800 font-medium mb-1">📱 Android 操作步骤：</p>
+                              <ol className="text-xs text-amber-700 leading-relaxed list-decimal list-inside space-y-0.5">
+                                <li>长按主屏幕上的应用图标</li>
+                                <li>选择「应用信息」</li>
+                                <li>点击「通知」</li>
+                                <li>开启「允许通知」</li>
+                              </ol>
+                            </div>
+                          ) : (
+                            <p className="text-xs text-amber-600 leading-relaxed mb-2">
+                              请在浏览器设置中允许本站的通知权限。
+                            </p>
+                          )}
+                          <button
+                            onClick={handleOpenSettings}
+                            className="w-full py-2 rounded-lg text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300 hover:bg-amber-200 transition-colors"
+                          >
+                            {isAndroid() ? "尝试打开系统设置" : "我已开启，重新检测"}
+                          </button>
                         </div>
                       </div>
                     </div>

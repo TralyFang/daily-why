@@ -112,13 +112,13 @@ async function handleCron(debug: boolean = false) {
         continue;
       }
 
-      // Check if user hasn't visited in 30+ days (zombie sub)
+      // Check if user hasn't visited in 14+ days (zombie sub)
       const lastVisited = sub.lastVisitedDate ? new Date(sub.lastVisitedDate + "T00:00:00+08:00") : null;
       const daysSinceVisit = lastVisited
         ? Math.floor((beijingTime.getTime() - lastVisited.getTime()) / 86400000)
         : 999;
 
-      if (daysSinceVisit > 30) {
+      if (daysSinceVisit > 14) {
         // Clean up zombie subscription
         await kv.delete(`push:sub:${sub.deviceId}`);
         results.cleaned.push(`zombie:${sub.deviceId} (${daysSinceVisit} days)`);

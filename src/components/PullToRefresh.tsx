@@ -139,8 +139,9 @@ export default function PullToRefresh({ onRefresh, isContentAtTop }: Props) {
 
   return (
     <div
-      className="fixed top-0 left-0 right-0 z-50 flex items-center justify-center"
+      className="fixed left-0 right-0 z-50 flex items-center justify-center"
       style={{
+        top: "env(safe-area-inset-top, 0px)",
         height: isRefreshing ? 48 : pullDistance,
         opacity: showIndicator ? 1 : 0,
         transition: isRefreshing ? 'none' : pullDistance === 0 ? 'height 300ms ease, opacity 300ms ease' : 'none',

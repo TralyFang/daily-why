@@ -30,11 +30,40 @@ function pickRandom(arr: string[], n: number): string[] {
   return shuffled.slice(0, n);
 }
 
+const TOPICS_HISTORY_KEY = "topics-history";
+const TOPICS_HISTORY_MAX_IN_PROMPT = 100; // Only include last 100 in AI prompt
+
+async function getTopicsHistory(kv: unknown): Promise<string[]> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const raw = await (kv as any).get(TOPICS_HISTORY_KEY, { type: "text" });
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return [];
+}
+
+async function appendTopicsHistory(kv: unknown, newTopics: string[]): Promise<void> {
+  const existing = await getTopicsHistory(kv);
+  const updated = [...existing, ...newTopics];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await (kv as any).put(TOPICS_HISTORY_KEY, JSON.stringify(updated));
+}
+
+function extractTitle(content: string): string {
+  const match = content.match(/^#\s*(为什么.+？)/m);
+  return match ? match[1] : "";
+}
+
 async function generateArticle(
   ai: unknown,
   topic: string,
-  index: number
+  index: number,
+  historyTitles: string[]
 ): Promise<string> {
+  const historyHint = historyTitles.length > 0
+    ? `\n\n注意：以下主题已经生成过，请务必避免重复或接近的内容：\n${historyTitles.slice(-TOPICS_HISTORY_MAX_IN_PROMPT).map(t => `- ${t}`).join("\n")}`
+    : "";
+
   const prompt = `你是一个科普作家，负责为"每日一个为什么"网站创作内容。请根据以下要求生成一篇文章：
 
 主题领域：${topic}
@@ -49,7 +78,7 @@ async function generateArticle(
    - 结尾用引用块（> ）写一句总结金句
 4. 底部附 1-2 条参考资料来源（格式：*参考资料：xxx*）
 5. 内容风格：通俗易懂、有趣味性、有深度，适合大众阅读
-6. 不要出现"今天我们来聊聊"之类的开场白，直接进入正题
+6. 不要出现"今天我们来聊聊"之类的开场白，直接进入正题${historyHint}
 
 请直接输出 Markdown 格式的文章，不要有额外的说明。`;
 
@@ -116,16 +145,23 @@ export async function GET(request: Request) {
     const keys = allKeys.slice(0, articleCount);
     const results: { key: string; content: string; status: string }[] = [];
 
+    // Load topics history for deduplication
+    const historyTitles = await getTopicsHistory(kv);
+    const newTitles: string[] = [];
+
     // Generate articles
     for (let i = 0; i < articleCount; i++) {
       let content = "";
       let attempts = 0;
       let lastError = "";
 
+      // Combine history + newly generated titles in this batch for dedup
+      const allHistory = [...historyTitles, ...newTitles];
+
       while (attempts < 3) {
         attempts++;
         try {
-          content = await generateArticle(ai, selectedTopics[i], i);
+          content = await generateArticle(ai, selectedTopics[i], i, allHistory);
           if (validateContent(content)) break;
           lastError = "内容验证失败";
         } catch (err) {
@@ -139,11 +175,19 @@ export async function GET(request: Request) {
         results.push({ key: keys[i], content, status: `failed (${lastError})` });
       } else {
         results.push({ key: keys[i], content, status: "ok" });
+        // Extract and track the generated title
+        const title = extractTitle(content);
+        if (title) newTitles.push(title);
       }
 
       // Write to KV: 主内容 7 天，副内容 1 天
       const ttl = i === 0 ? KV_TTL_MAIN : KV_TTL_EXTRA;
       await kv.put(keys[i], content, { expirationTtl: ttl });
+    }
+
+    // Persist new titles to topics history (no TTL — permanent)
+    if (newTitles.length > 0) {
+      await appendTopicsHistory(kv, newTitles);
     }
 
     return NextResponse.json({

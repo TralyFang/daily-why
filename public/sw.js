@@ -49,7 +49,7 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch: network-first with cache fallback
+// Fetch: differentiated caching strategies
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -57,28 +57,81 @@ self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (request.method !== 'GET') return;
 
-  // API content requests — network-first with offline fallback
-  // Always fetch fresh data from server; only use cache when offline.
+  // API content requests — differentiated by params
   if (url.pathname.startsWith('/api/content')) {
+    const hasDate = url.searchParams.has('date');
+    const hasRefresh = url.searchParams.has('_refresh');
+
+    // Helper: normalize URL for cache key (strip _refresh, _t, _d params)
+    const getCacheKey = (reqUrl) => {
+      const cacheUrl = new URL(reqUrl);
+      cacheUrl.searchParams.delete('_refresh');
+      cacheUrl.searchParams.delete('_t');
+      cacheUrl.searchParams.delete('_d');
+      return cacheUrl.toString();
+    };
+
+    if (hasDate && hasRefresh) {
+      // Force refresh: network-only, then update cache
+      event.respondWith(
+        fetch(request).then(async (response) => {
+          if (response.ok) {
+            const cache = await caches.open(API_CACHE);
+            cache.put(getCacheKey(request.url), response.clone());
+          }
+          return response;
+        }).catch(async () => {
+          // Network failed — try cache as last resort
+          const cache = await caches.open(API_CACHE);
+          const cached = await cache.match(getCacheKey(request.url));
+          if (cached) return cached;
+          return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        })
+      );
+      return;
+    }
+
+    if (hasDate && !hasRefresh) {
+      // Normal content load: cache-first, miss goes to network
+      event.respondWith(
+        (async () => {
+          const cache = await caches.open(API_CACHE);
+          const cacheKey = getCacheKey(request.url);
+          const cached = await cache.match(cacheKey);
+          if (cached) return cached;
+
+          // Cache miss — fetch from network
+          try {
+            const response = await fetch(request);
+            if (response.ok) {
+              cache.put(cacheKey, response.clone());
+            }
+            return response;
+          } catch {
+            return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
+              status: 503,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        })()
+      );
+      return;
+    }
+
+    // Date list (no date param): network-first with cache fallback
     event.respondWith(
       fetch(request).then(async (response) => {
         if (response.ok) {
-          // Cache the fresh response for offline use
           const cache = await caches.open(API_CACHE);
-          // Strip cache-buster params for consistent cache keys
-          const cacheUrl = new URL(request.url);
-          cacheUrl.searchParams.delete('_t');
-          cacheUrl.searchParams.delete('_d');
-          cache.put(cacheUrl.toString(), response.clone());
+          cache.put(getCacheKey(request.url), response.clone());
         }
         return response;
       }).catch(async () => {
-        // Network failed — try cache (offline fallback)
         const cache = await caches.open(API_CACHE);
-        const cacheUrl = new URL(request.url);
-        cacheUrl.searchParams.delete('_t');
-        cacheUrl.searchParams.delete('_d');
-        const cached = await cache.match(cacheUrl.toString());
+        const cached = await cache.match(getCacheKey(request.url));
         if (cached) return cached;
         return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
           status: 503,
