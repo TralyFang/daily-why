@@ -121,23 +121,47 @@ self.addEventListener('fetch', (event) => {
       return;
     }
 
-    // Date list (no date param): network-first with cache fallback
+    // Date list (no date param): stale-while-revalidate
+    // Return cache immediately if available, fetch in background and notify client if changed
     event.respondWith(
-      fetch(request).then(async (response) => {
-        if (response.ok) {
-          const cache = await caches.open(API_CACHE);
-          cache.put(getCacheKey(request.url), response.clone());
-        }
-        return response;
-      }).catch(async () => {
+      (async () => {
         const cache = await caches.open(API_CACHE);
-        const cached = await cache.match(getCacheKey(request.url));
-        if (cached) return cached;
+        const cacheKey = getCacheKey(request.url);
+        const cached = await cache.match(cacheKey);
+
+        // Background revalidation — fetch network and update cache
+        const revalidate = fetch(request).then(async (response) => {
+          if (response.ok) {
+            if (cached) {
+              const newBody = await response.clone().text();
+              const oldBody = await cached.clone().text();
+              if (newBody !== oldBody) {
+                // Date list changed — notify all clients
+                const clients = await self.clients.matchAll({ type: 'window' });
+                clients.forEach((client) => {
+                  client.postMessage({ type: 'DATES_UPDATED' });
+                });
+              }
+            }
+            cache.put(cacheKey, response.clone());
+          }
+          return response;
+        }).catch(() => null);
+
+        if (cached) {
+          // Return stale cache immediately, revalidate in background
+          event.waitUntil(revalidate);
+          return cached;
+        }
+
+        // No cache — wait for network
+        const response = await revalidate;
+        if (response) return response;
         return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
           status: 503,
           headers: { 'Content-Type': 'application/json' },
         });
-      })
+      })()
     );
     return;
   }

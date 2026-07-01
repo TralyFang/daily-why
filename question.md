@@ -297,6 +297,20 @@ const handleSave = async () => {
 
 **涉及文件**：新增 5 个文件，重构 `src/components/DailyPage.tsx`
 
+**拆分后修复的问题**：
+
+拆分完成后发现两个回归问题，根因都是从单文件提取为 hook 后引入的：
+
+| 问题 | 根因 | 修复方案 |
+|------|------|----------|
+| Tab 点击和滑动切换失效 | `useSwipeGesture` 中 `handleDragMove`/`handleDragEnd` 通过闭包引用 `isDragging` state，在同一渲染周期内 `setIsDragging(true)` 后 state 还是 `false`，加上 `currentIndex`/`maxIndex` 也可能是过期闭包值 | 新增 `isDraggingRef`、`currentIndexRef`、`maxIndexRef` 三个 ref 同步最新值，drag 系列函数改为读取 ref 而非 state；`handleDragStart` 时重新测量 `slideWidth` 确保首次拖拽宽度正确；新增 `datesLoaded` 参数让 slideWidth 在容器挂载后重新执行 useEffect |
+| "再来一个为什么"点击后容器高度不撑开 | 原来 `containerHeight` 仅在 `currentIndex`/`contentCache` 变化时重新测量，但 ExtraContent 展开时这两个值都不变 | 新增 `MutationObserver` + `ResizeObserver` 双重监听当前 slide：ResizeObserver 检测元素尺寸变化，MutationObserver 检测 DOM 子树变化（节点插入/移除），通过 `requestAnimationFrame` + `scrollHeight` 重新测量容器高度 |
+
+**经验教训**：
+- 从组件提取 hook 时，所有在事件处理函数中引用的 state/props 都要考虑闭包陷阱，用 ref 做同步镜像
+- carousel 轮播容器的固定高度模式下，子内容动态变化必须有高度同步机制（ResizeObserver 或 MutationObserver）
+- `containerRef` 类型从 `RefObject<HTMLElement>` 改为 `RefObject<HTMLElement | null>` 以兼容 React 19 的 ref 初始化，使用时通过 `as React.RefObject<HTMLElement>` 断言
+
 ---
 
 ### 问题 11：调试模式自定义推送

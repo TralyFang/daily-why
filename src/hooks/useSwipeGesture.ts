@@ -8,12 +8,13 @@ export interface UseSwipeGestureOptions {
   currentIndex: number;
   maxIndex: number;
   onNavigate: (index: number) => void;
+  datesLoaded?: boolean;
 }
 
 export interface UseSwipeGestureReturn {
   translateX: number;
   isDragging: boolean;
-  containerRef: React.RefObject<HTMLElement>;
+  containerRef: React.RefObject<HTMLElement | null>;
   slideWidth: React.MutableRefObject<number>;
   onTouchStart: (e: React.TouchEvent) => void;
   onTouchMove: (e: React.TouchEvent) => void;
@@ -27,6 +28,7 @@ export function useSwipeGesture({
   currentIndex,
   maxIndex,
   onNavigate,
+  datesLoaded,
 }: UseSwipeGestureOptions): UseSwipeGestureReturn {
   const [translateX, setTranslateX] = useState<number>(0);
   const [isDragging, setIsDragging] = useState<boolean>(false);
@@ -35,41 +37,57 @@ export function useSwipeGesture({
   const dragStartY = useRef<number>(0);
   const dragDeltaX = useRef<number>(0);
   const directionLock = useRef<DirectionLock>("undetermined");
-  const containerRef = useRef<HTMLElement>(null!);
+  const containerRef = useRef<HTMLElement | null>(null);
   const slideWidth = useRef<number>(0);
 
-  const canSwipeLeft = currentIndex < maxIndex;
-  const canSwipeRight = currentIndex > 0;
+  // Use refs to avoid stale closure issues in event handlers
+  const isDraggingRef = useRef<boolean>(false);
+  const currentIndexRef = useRef<number>(currentIndex);
+  const maxIndexRef = useRef<number>(maxIndex);
 
-  // slide width measurement
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+    maxIndexRef.current = maxIndex;
+  }, [currentIndex, maxIndex]);
+
+  // slide width measurement — re-measure when datesLoaded changes (container mounts)
   useEffect(() => {
     if (!containerRef.current) return;
     const updateWidth = () => {
-      slideWidth.current = containerRef.current!.offsetWidth;
+      if (containerRef.current) {
+        slideWidth.current = containerRef.current.offsetWidth;
+      }
     };
     updateWidth();
     window.addEventListener("resize", updateWidth);
     return () => window.removeEventListener("resize", updateWidth);
-  }, []);
+  }, [datesLoaded]);
 
   const navigateTo = useCallback((index: number) => {
     onNavigate(index);
     setTranslateX(0);
     setIsDragging(false);
+    isDraggingRef.current = false;
     directionLock.current = "undetermined";
   }, [onNavigate]);
 
   const handleDragStart = (clientX: number, clientY: number) => {
+    // Re-measure slide width at drag start to ensure it's current
+    if (containerRef.current) {
+      slideWidth.current = containerRef.current.offsetWidth;
+    }
     dragStartX.current = clientX;
     dragStartY.current = clientY;
     dragDeltaX.current = 0;
     directionLock.current = "undetermined";
     setIsDragging(true);
+    isDraggingRef.current = true;
     setTranslateX(0);
   };
 
   const handleDragMove = (clientX: number, clientY: number) => {
-    if (!isDragging) return;
+    // Use ref for isDragging check to avoid stale closure
+    if (!isDraggingRef.current) return;
     const deltaX = clientX - dragStartX.current;
     const deltaY = clientY - dragStartY.current;
 
@@ -86,32 +104,41 @@ export function useSwipeGesture({
 
     if (directionLock.current === "vertical") return;
 
+    const idx = currentIndexRef.current;
+    const max = maxIndexRef.current;
+
     dragDeltaX.current = deltaX;
     // rubber-band at edges
-    if (currentIndex === 0 && deltaX > 0) {
+    if (idx === 0 && deltaX > 0) {
       dragDeltaX.current = deltaX * 0.3;
     }
-    if (currentIndex === maxIndex && deltaX < 0) {
+    if (idx === max && deltaX < 0) {
       dragDeltaX.current = deltaX * 0.3;
     }
     setTranslateX(dragDeltaX.current);
   };
 
   const handleDragEnd = () => {
-    if (!isDragging) return;
+    // Use ref for isDragging check to avoid stale closure
+    if (!isDraggingRef.current) return;
     if (directionLock.current === "vertical") {
       setIsDragging(false);
+      isDraggingRef.current = false;
       directionLock.current = "undetermined";
       return;
     }
     setIsDragging(false);
+    isDraggingRef.current = false;
     directionLock.current = "undetermined";
 
+    const idx = currentIndexRef.current;
+    const max = maxIndexRef.current;
     const threshold = slideWidth.current * 0.15;
-    if (dragDeltaX.current < -threshold && canSwipeLeft) {
-      navigateTo(currentIndex + 1);
-    } else if (dragDeltaX.current > threshold && canSwipeRight) {
-      navigateTo(currentIndex - 1);
+
+    if (dragDeltaX.current < -threshold && idx < max) {
+      navigateTo(idx + 1);
+    } else if (dragDeltaX.current > threshold && idx > 0) {
+      navigateTo(idx - 1);
     } else {
       setTranslateX(0);
     }
@@ -148,7 +175,7 @@ export function useSwipeGesture({
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || directionLock.current === "vertical") return;
+    if (!isDraggingRef.current || directionLock.current === "vertical") return;
     if (directionLock.current === "undetermined") {
       directionLock.current = "horizontal";
     }

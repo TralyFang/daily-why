@@ -59,6 +59,7 @@ export default function DailyPage() {
     currentIndex,
     maxIndex,
     onNavigate: setCurrentIndex,
+    datesLoaded,
   });
 
   // Container height for smooth transitions
@@ -83,6 +84,22 @@ export default function DailyPage() {
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, [updateContainerHeight]);
+
+  // ResizeObserver to track current slide height changes (e.g. ExtraContent expand)
+  useEffect(() => {
+    const currentSlide = slideRefs.current.get(currentIndex);
+    if (!currentSlide) return;
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const height = entry.borderBoxSize?.[0]?.blockSize ?? (entry.target as HTMLElement).offsetHeight;
+        if (height > 0) {
+          setContainerHeight(height);
+        }
+      }
+    });
+    observer.observe(currentSlide);
+    return () => observer.disconnect();
+  }, [currentIndex, datesLoaded, contentCache]);
 
   // Header hide/show on scroll
   const [headerVisible, setHeaderVisible] = useState<boolean>(true);
@@ -226,7 +243,7 @@ export default function DailyPage() {
         </main>
       ) : (
         <main
-          ref={containerRef}
+          ref={containerRef as React.RefObject<HTMLElement>}
           className="max-w-lg mx-auto w-full overflow-hidden select-none relative"
           onTouchStart={onTouchStart}
           onTouchMove={onTouchMove}
