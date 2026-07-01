@@ -2,314 +2,81 @@
 
 import { useState, useEffect, useCallback, useRef, useLayoutEffect } from "react";
 import DateTabs from "./DateTabs";
-import MarkdownRenderer from "./MarkdownRenderer";
 import PullToRefresh from "./PullToRefresh";
 import ReminderSettings from "./ReminderSettings";
-
-interface DateInfo {
-  date: string;
-  label: string;
-  weekday: string;
-}
-
-interface ChanceState {
-  date: string;
-  used: number;
-}
-
-type DirectionLock = "undetermined" | "horizontal" | "vertical";
-
-const MAX_CHANCES = 3;
-const CHANCE_STORAGE_KEY = "daily-why-chances";
+import SettingsPanel from "./SettingsPanel";
+import ContentSlide from "./ContentSlide";
+import { useContentLoader } from "../hooks/useContentLoader";
+import { useSwipeGesture } from "../hooks/useSwipeGesture";
 
 function getMonthDay(dateStr: string): { month: number; day: number } {
-  const [y, m, d] = dateStr.split("-").map(Number);
+  const [, m, d] = dateStr.split("-").map(Number);
   return { month: m, day: d };
 }
 
-function getChanceState(): ChanceState {
-  if (typeof window === "undefined") return { date: "", used: 0 };
-  try {
-    const raw = localStorage.getItem(CHANCE_STORAGE_KEY);
-    if (raw) {
-      const state: ChanceState = JSON.parse(raw);
-      const today = new Date();
-      const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-      if (state.date === todayStr) return state;
-    }
-  } catch {}
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  return { date: todayStr, used: 0 };
-}
-
-function saveChanceState(state: ChanceState) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(CHANCE_STORAGE_KEY, JSON.stringify(state));
-}
-
-function getSecondsUntilMidnight(): number {
-  const now = new Date();
-  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  return Math.max(0, Math.floor((midnight.getTime() - now.getTime()) / 1000));
-}
-
-function formatCountdown(seconds: number): string {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  return `${h}小时${m}分${s}秒`;
-}
-
 export default function DailyPage() {
-  const [availableDates, setAvailableDates] = useState<DateInfo[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [contentCache, setContentCache] = useState<Record<string, string>>({});
-  const [loadingDates, setLoadingDates] = useState<Set<string>>(new Set());
-  const [errorDates, setErrorDates] = useState<Record<string, string>>({});
-  const [datesLoaded, setDatesLoaded] = useState<boolean>(false);
 
-  // swipe state
-  const [translateX, setTranslateX] = useState<number>(0);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [containerHeight, setContainerHeight] = useState<number | null>(null);
-  const dragStartX = useRef<number>(0);
-  const dragStartY = useRef<number>(0);
-  const dragDeltaX = useRef<number>(0);
-  const directionLock = useRef<DirectionLock>("undetermined");
-  const containerRef = useRef<HTMLDivElement>(null);
-  const slideRefs = useRef<Map<number, HTMLDivElement>>(new Map());
-  const slideWidth = useRef<number>(0);
-  const currentIndexRef = useRef<number>(0);
+  // Extra content state clearing callback (for refresh/clear cache)
+  const extraClearRef = useRef<() => void>(() => {});
+  const onClearExtraState = useCallback(() => {
+    extraClearRef.current();
+  }, []);
 
-  // header hide/show on scroll
-  const [headerVisible, setHeaderVisible] = useState<boolean>(true);
-  const lastScrollY = useRef<number>(0);
-  const headerHeight = 104; // approximate header + tabs height
+  // Content loader hook
+  const {
+    availableDates,
+    contentCache,
+    loadingDates,
+    errorDates,
+    datesLoaded,
+    handleRefresh,
+    handleClearCache,
+    clearingCache,
+  } = useContentLoader(currentIndex, setCurrentIndex, onClearExtraState);
 
-
-  // "再来一个" state
-  const [chanceState, setChanceState] = useState<ChanceState>({ date: "", used: 0 });
-  const [extraContent, setExtraContent] = useState<string | null>(null);
-  const [extraLoading, setExtraLoading] = useState<boolean>(false);
-  const [extraError, setExtraError] = useState<string | null>(null);
-  const [showExtraCard, setShowExtraCard] = useState<boolean>(false);
-  const [countdown, setCountdown] = useState<number>(getSecondsUntilMidnight());
-
-  // Settings panel state
-  const [showSettings, setShowSettings] = useState<boolean>(false);
-  const [clearingCache, setClearingCache] = useState<boolean>(false);
-
-  // derived
+  // Derived
+  const maxIndex = availableDates.length - 1;
   const isExploreMode = currentIndex > 2;
   const exploreLayer = isExploreMode ? currentIndex - 2 : 0;
-  const maxIndex = availableDates.length - 1;
-  const canSwipeLeft = currentIndex < maxIndex;
-  const canSwipeRight = currentIndex > 0;
   const mainDates = availableDates.slice(0, 3);
   const currentDateInfo = availableDates[currentIndex];
-  const showExploreHint = availableDates.length > 3 && currentIndex === 2;
+  const selectedDate = currentDateInfo?.date || "";
 
-  // Keep currentIndexRef in sync
-  useEffect(() => {
-    currentIndexRef.current = currentIndex;
-  }, [currentIndex]);
+  // Swipe gesture hook
+  const {
+    translateX,
+    isDragging,
+    containerRef,
+    slideWidth,
+    onTouchStart,
+    onTouchMove,
+    onTouchEnd,
+    onMouseDown,
+    onMouseMove,
+    onMouseUp,
+  } = useSwipeGesture({
+    currentIndex,
+    maxIndex,
+    onNavigate: setCurrentIndex,
+  });
 
-  // init chance state
-  useEffect(() => {
-    setChanceState(getChanceState());
-  }, []);
+  // Container height for smooth transitions
+  const [containerHeight, setContainerHeight] = useState<number | null>(null);
+  const slideRefs = useRef<Map<number, HTMLDivElement>>(new Map());
 
-  // countdown timer
-  useEffect(() => {
-    if (chanceState.used >= MAX_CHANCES) {
-      const timer = setInterval(() => {
-        setCountdown(getSecondsUntilMidnight());
-      }, 1000);
-      return () => clearInterval(timer);
-    }
-  }, [chanceState.used]);
-
-  // fetch available dates, optionally preserving a target date's position
-  const fetchDates = useCallback(async (preserveDate?: string) => {
-    try {
-      const res = await fetch(`/api/content`);
-      const data = await res.json();
-      if (data.availableDates && data.availableDates.length > 0) {
-        const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {
-          const [y, m, dNum] = date.split("-").map(Number);
-          const todayDate = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-          const targetDate = new Date(y, m - 1, dNum);
-          const dayDiff = Math.round((todayDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
-          let label = "";
-          switch (dayDiff) {
-            case 0: label = "今天"; break;
-            case 1: label = "昨天"; break;
-            case 2: label = "前天"; break;
-            default: label = `${dayDiff}天前`;
-          }
-          const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-          return { date, label, weekday: weekdays[targetDate.getDay()] };
-        });
-        setAvailableDates(dateInfos);
-
-        // Restore to the same date position if refreshing, otherwise go to first
-        // If the date no longer exists, fall back to the closest available index
-        let targetIndex = 0;
-        if (preserveDate) {
-          const idx = dateInfos.findIndex(d => d.date === preserveDate);
-          if (idx !== -1) {
-            targetIndex = idx;
-          } else {
-            // Date gone — clamp to the last available index (closest to where user was)
-            targetIndex = Math.min(currentIndexRef.current, dateInfos.length - 1);
-          }
-        }
-        setCurrentIndex(targetIndex);
-        setDatesLoaded(true);
-        // When preserveDate is set, it's a refresh — force reload current content
-        const forceRefresh = !!preserveDate;
-        loadContent(dateInfos[targetIndex].date, forceRefresh);
-        // Prefetch adjacent (no force)
-        if (targetIndex > 0) loadContent(dateInfos[targetIndex - 1].date);
-        if (targetIndex < dateInfos.length - 1) loadContent(dateInfos[targetIndex + 1].date);
-      } else {
-        setErrorDates({ "global": "暂无可用内容" });
-        setDatesLoaded(true);
-      }
-    } catch {
-      setErrorDates(prev => ({ ...prev, "global": "加载失败，请刷新重试" }));
-      setDatesLoaded(true);
-    }
-  }, []);
-
-  // refresh handler for PullToRefresh: reload content, preserving current tab
-  const handleRefresh = useCallback(async () => {
-    const currentDate = availableDates[currentIndex]?.date;
-    setExtraContent(null);
-    setShowExtraCard(false);
-    setExtraError(null);
-    setChanceState(getChanceState());
-    await fetchDates(currentDate);
-  }, [fetchDates, availableDates, currentIndex]);
-
-  // Clear all caches: SW cache + localStorage + in-memory state
-  const handleClearCache = useCallback(async () => {
-    setClearingCache(true);
-    try {
-      // 1. Clear SW API cache
-      const cacheNames = await caches.keys();
-      for (const name of cacheNames) {
-        if (name.includes("api")) {
-          await caches.delete(name);
-        }
-      }
-      // 2. Clear localStorage data
-      localStorage.removeItem(CHANCE_STORAGE_KEY);
-      // 3. Clear in-memory state
-      setContentCache({});
-      setErrorDates({});
-      setExtraContent(null);
-      setShowExtraCard(false);
-      setExtraError(null);
-      setChanceState(getChanceState());
-      // 4. Reload fresh data
-      await fetchDates();
-    } catch {
-      // silently fail
-    } finally {
-      setClearingCache(false);
-      setShowSettings(false);
-    }
-  }, [fetchDates]);
-
-  useEffect(() => {
-    fetchDates();
-  }, []);
-
-  // Listen for Service Worker CONTENT_UPDATED message
-  // When SW detects the API response has changed, silently refresh content
-  useEffect(() => {
-    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
-
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === "CONTENT_UPDATED") {
-        // Only refresh the date list (no date param), individual dates will follow
-        const isDateListUpdate = !event.data.url.includes("date=");
-        if (isDateListUpdate) {
-          handleRefresh();
-        }
-      }
-    };
-    navigator.serviceWorker.addEventListener("message", handler);
-    return () => navigator.serviceWorker.removeEventListener("message", handler);
-  }, [handleRefresh]);
-
-  // load content (with cache), forceRefresh bypasses cache and updates SW cache
-  const loadContent = useCallback(async (date: string, forceRefresh = false) => {
-    if (!forceRefresh && (contentCache[date] || loadingDates.has(date))) return;
-    if (loadingDates.has(date)) return;
-    setLoadingDates(prev => new Set([...prev, date]));
-    try {
-      const url = forceRefresh
-        ? `/api/content?date=${date}&_refresh=1`
-        : `/api/content?date=${date}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.content) {
-        setContentCache(prev => ({ ...prev, [date]: data.content }));
-        // Clear any previous error for this date
-        setErrorDates(prev => {
-          const next = { ...prev };
-          delete next[date];
-          return next;
-        });
-      } else {
-        setErrorDates(prev => ({ ...prev, [date]: data.error || "该日期暂无内容" }));
-      }
-    } catch {
-      setErrorDates(prev => ({ ...prev, [date]: "加载失败" }));
-    } finally {
-      setLoadingDates(prev => {
-        const next = new Set(prev);
-        next.delete(date);
-        return next;
-      });
-    }
-  }, [contentCache, loadingDates]);
-
-  // when currentIndex changes, load content + prefetch adjacent
-  useEffect(() => {
-    if (!currentDateInfo) return;
-    loadContent(currentDateInfo.date);
-    if (currentIndex > 0) loadContent(availableDates[currentIndex - 1].date);
-    if (currentIndex < availableDates.length - 1) loadContent(availableDates[currentIndex + 1].date);
-  }, [currentIndex, availableDates, loadContent]);
-
-  // check if current card's content area is scrolled to top (for pull-to-refresh)
-  const isContentAtTop = useCallback(() => {
-    const currentSlide = slideRefs.current.get(currentIndex);
-    if (!currentSlide) return true;
-    const scrollable = currentSlide.querySelector('.overflow-y-auto');
-    if (!scrollable) return true;
-    return scrollable.scrollTop <= 1;
-  }, [currentIndex]);
-
-  // container height — measure current slide and set explicitly for smooth transitions
   const updateContainerHeight = useCallback(() => {
     const currentSlide = slideRefs.current.get(currentIndex);
     if (currentSlide) {
-      // Use offsetHeight for the actual rendered height (not scrollHeight which can be larger)
       const height = currentSlide.offsetHeight;
       setContainerHeight(height);
     }
   }, [currentIndex]);
 
   useLayoutEffect(() => {
-    // Small delay to let content render before measuring
     const raf = requestAnimationFrame(() => updateContainerHeight());
     return () => cancelAnimationFrame(raf);
-  }, [currentIndex, contentCache, showExtraCard, extraContent, updateContainerHeight]);
+  }, [currentIndex, contentCache, updateContainerHeight]);
 
   useEffect(() => {
     const onResize = () => updateContainerHeight();
@@ -317,18 +84,19 @@ export default function DailyPage() {
     return () => window.removeEventListener("resize", onResize);
   }, [updateContainerHeight]);
 
+  // Header hide/show on scroll
+  const [headerVisible, setHeaderVisible] = useState<boolean>(true);
+  const lastScrollY = useRef<number>(0);
+  const headerHeight = 104;
 
-  // scroll-based header hide/show
   useEffect(() => {
     const handleScroll = () => {
       const currentY = window.scrollY;
       const delta = currentY - lastScrollY.current;
 
       if (delta > 10 && currentY > headerHeight) {
-        // scrolling down past header — hide
         setHeaderVisible(false);
       } else if (delta < -5) {
-        // scrolling up — show
         setHeaderVisible(true);
       }
 
@@ -339,170 +107,30 @@ export default function DailyPage() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, []);
 
-  // slide width
-  useEffect(() => {
-    if (!containerRef.current) return;
-    const updateWidth = () => {
-      slideWidth.current = containerRef.current!.offsetWidth;
-    };
-    updateWidth();
-    window.addEventListener("resize", updateWidth);
-    return () => window.removeEventListener("resize", updateWidth);
-  }, [datesLoaded]);
+  // Settings panel
+  const [showSettings, setShowSettings] = useState<boolean>(false);
 
-  // navigate
-  const navigateTo = useCallback((index: number) => {
-    setCurrentIndex(index);
-    setTranslateX(0);
-    setIsDragging(false);
-    directionLock.current = "undetermined";
-  }, []);
+  const handleClearCacheAndClose = useCallback(async () => {
+    await handleClearCache();
+    setShowSettings(false);
+  }, [handleClearCache]);
 
-  // "再来一个" handler: collapse → fetch → expand (one-click flow)
-  const handleExtraClick = async () => {
-    if (chanceState.used >= MAX_CHANCES) return;
-    if (extraLoading) return;
+  // Check if content at top for pull-to-refresh
+  const isContentAtTop = useCallback(() => {
+    const currentSlide = slideRefs.current.get(currentIndex);
+    if (!currentSlide) return true;
+    const scrollable = currentSlide.querySelector('.overflow-y-auto');
+    if (!scrollable) return true;
+    return scrollable.scrollTop <= 1;
+  }, [currentIndex]);
 
-    // Step 1: Collapse current extra card (with animation time)
-    if (showExtraCard) {
-      setShowExtraCard(false);
-      // Wait for collapse animation to finish
-      await new Promise(resolve => setTimeout(resolve, 300));
-    }
-
-    setExtraError(null);
-    const nextSlot = chanceState.used + 1;
-    const todayDate = availableDates[0]?.date || chanceState.date;
-    const extraKey = `${todayDate}-extra-${nextSlot}`;
-
-    // Step 2: Fetch next content
-    setExtraLoading(true);
-    try {
-      const res = await fetch(`/api/content?date=${extraKey}`);
-      const data = await res.json();
-      if (data.content) {
-        setExtraContent(data.content);
-        // Step 3: Expand new content
-        setShowExtraCard(true);
-        const newState = { date: chanceState.date, used: nextSlot };
-        setChanceState(newState);
-        saveChanceState(newState);
-      } else {
-        setExtraError(data.error || "暂无更多内容");
-      }
-    } catch {
-      setExtraError("加载失败，请重试");
-    } finally {
-      setExtraLoading(false);
-    }
-  };
-
-  const dismissExtra = () => {
-    setShowExtraCard(false);
-  };
-
-  // swipe handlers
-  const handleDragStart = (clientX: number, clientY: number) => {
-    dragStartX.current = clientX;
-    dragStartY.current = clientY;
-    dragDeltaX.current = 0;
-    directionLock.current = "undetermined";
-    setIsDragging(true);
-    setTranslateX(0);
-  };
-
-  const handleDragMove = (clientX: number, clientY: number) => {
-    if (!isDragging) return;
-    const deltaX = clientX - dragStartX.current;
-    const deltaY = clientY - dragStartY.current;
-
-    if (directionLock.current === "undetermined") {
-      const absDeltaX = Math.abs(deltaX);
-      const absDeltaY = Math.abs(deltaY);
-      if (absDeltaX < 8 && absDeltaY < 8) return;
-      if (absDeltaX > absDeltaY) {
-        directionLock.current = "horizontal";
-      } else {
-        directionLock.current = "vertical";
-      }
-    }
-
-    if (directionLock.current === "vertical") return;
-
-    dragDeltaX.current = deltaX;
-    // rubber-band at edges
-    if (currentIndex === 0 && deltaX > 0) {
-      dragDeltaX.current = deltaX * 0.3;
-    }
-    if (currentIndex === maxIndex && deltaX < 0) {
-      dragDeltaX.current = deltaX * 0.3;
-    }
-    setTranslateX(dragDeltaX.current);
-  };
-
-  const handleDragEnd = () => {
-    if (!isDragging) return;
-    if (directionLock.current === "vertical") {
-      setIsDragging(false);
-      directionLock.current = "undetermined";
-      return;
-    }
-    setIsDragging(false);
-    directionLock.current = "undetermined";
-
-    const threshold = slideWidth.current * 0.15;
-    if (dragDeltaX.current < -threshold && canSwipeLeft) {
-      navigateTo(currentIndex + 1);
-    } else if (dragDeltaX.current > threshold && canSwipeRight) {
-      navigateTo(currentIndex - 1);
-    } else {
-      setTranslateX(0);
-    }
-  };
-
-  // touch events
-  const onTouchStart = (e: React.TouchEvent) => {
-    handleDragStart(e.touches[0].clientX, e.touches[0].clientY);
-  };
-  const onTouchMove = (e: React.TouchEvent) => {
-    const clientX = e.touches[0].clientX;
-    const clientY = e.touches[0].clientY;
-    const deltaX = Math.abs(clientX - dragStartX.current);
-    const deltaY = Math.abs(clientY - dragStartY.current);
-    if (directionLock.current === "undetermined" && (deltaX > 8 || deltaY > 8)) {
-      if (deltaX > deltaY) {
-        directionLock.current = "horizontal";
-      } else {
-        directionLock.current = "vertical";
-      }
-    }
-    if (directionLock.current === "horizontal") {
-      e.preventDefault();
-    }
-    handleDragMove(clientX, clientY);
-  };
-  const onTouchEnd = () => { handleDragEnd(); };
-
-  // mouse events
-  const onMouseDown = (e: React.MouseEvent) => {
-    handleDragStart(e.clientX, e.clientY);
-  };
-  const onMouseMove = (e: React.MouseEvent) => {
-    if (!isDragging || directionLock.current === "vertical") return;
-    if (directionLock.current === "undetermined") {
-      directionLock.current = "horizontal";
-    }
-    handleDragMove(e.clientX, e.clientY);
-  };
-  const onMouseUp = () => { handleDragEnd(); };
-
-  // tab click — always exits explore mode
+  // Tab click
   const handleTabSelect = (date: string) => {
     const idx = availableDates.findIndex(d => d.date === date);
-    if (idx !== -1) navigateTo(idx);
+    if (idx !== -1) setCurrentIndex(idx);
   };
 
-  // explore indicator
+  // Explore indicator
   let exploreIndicator: React.ReactNode = null;
   if (isExploreMode && currentDateInfo) {
     const { month, day } = getMonthDay(currentDateInfo.date);
@@ -523,21 +151,19 @@ export default function DailyPage() {
     }
   }
 
-  // carousel offset
+  // Carousel offset
   const carouselOffset = -(currentIndex * (slideWidth.current || 0)) + translateX;
 
-  // guards
+  // Guards
   const globalError = errorDates["global"];
-  const selectedDate = currentDateInfo?.date || "";
-  const isToday = currentIndex === 0;
-  const remaining = MAX_CHANCES - chanceState.used;
+  const canSwipeLeft = currentIndex < maxIndex;
 
   return (
     <div className="min-h-dvh flex flex-col bg-gradient-to-b from-brand-50 via-white to-gray-50">
       {/* Pull-to-refresh for PWA standalone mode */}
       <PullToRefresh onRefresh={handleRefresh} isContentAtTop={isContentAtTop} />
 
-      {/* Header + Tabs wrapper — hides on scroll down, shows on scroll up */}
+      {/* Header + Tabs wrapper */}
       <div
         className="sticky top-0 z-10 transition-transform duration-300 ease-in-out"
         style={{ transform: headerVisible ? "translateY(0)" : "translateY(-100%)" }}
@@ -625,170 +251,31 @@ export default function DailyPage() {
               transitionTimingFunction: "cubic-bezier(0.25, 0.1, 0.25, 1)",
             }}
           >
-            {availableDates.map((dateInfo, index) => {
-              const cachedContent = contentCache[dateInfo.date];
-              const isLoading = loadingDates.has(dateInfo.date);
-              const errorMsg = errorDates[dateInfo.date];
-              const isCurrentExplore = index > 2;
-
-              return (
-                <div
-                  key={dateInfo.date}
-                  ref={(el) => {
-                    if (el) slideRefs.current.set(index, el);
-                  }}
-                  className="w-full flex-shrink-0 px-4 py-4 relative"
-                  style={{ width: slideWidth.current || '100%' }}
-                >
-                  {isLoading && !cachedContent ? (
-                    <div className="flex flex-col items-center justify-center py-20">
-                      <div className="w-10 h-10 rounded-full border-2 border-brand-200 border-t-brand-500 animate-spin mb-4" />
-                      <p className="text-sm text-gray-400">加载中...</p>
-                    </div>
-                  ) : errorMsg && !cachedContent ? (
-                    <div className="empty-state">
-                      <img src="/icon.webp" alt="" className="w-16 h-16 rounded-full opacity-30 mb-4" />
-                      <p className="text-gray-500 text-base">{errorMsg}</p>
-                    </div>
-                  ) : (
-                    <div className={`content-card ${isCurrentExplore ? "explore-card" : ""}`}>
-                      {/* Date badge */}
-                      <div className={`px-4 py-3 flex items-center justify-between ${
-                        isCurrentExplore
-                          ? "bg-gradient-to-r from-amber-100 to-orange-100 text-amber-900"
-                          : "bg-brand-500 text-white"
-                      }`}>
-                        <span className="font-medium">
-                          {dateInfo.label}的为什么
-                        </span>
-                        <span className="text-sm opacity-80">
-                          {dateInfo.weekday}
-                        </span>
-                      </div>
-
-                      {/* Content */}
-                      <div className="px-5 py-5 select-text overflow-y-auto">
-                        {cachedContent ? (
-                          <MarkdownRenderer content={cachedContent} />
-                        ) : (
-                          <p className="text-gray-400 text-center py-8">内容加载中...</p>
-                        )}
-                      </div>
-
-                      {/* Explore hint — only on 前天 card (index 2), positioned at left edge */}
-                      {index === 2 && availableDates.length > 3 && (
-                        <div
-                          className="absolute left-0 top-0 bottom-0 flex items-center justify-center pointer-events-none select-none"
-                          style={{
-                            width: '48px',
-                            transform: `translateX(${Math.min(0, -60 + Math.max(0, -translateX / 3))}px)`,
-                            opacity: canSwipeLeft ? Math.min(1, (-translateX) / 60) : 0.6,
-                            transition: isDragging ? "none" : "opacity 300ms ease, transform 300ms ease",
-                          }}
-                        >
-                          <div
-                            className="text-xs text-amber-600/70 font-medium whitespace-nowrap"
-                            style={{
-                              writingMode: 'vertical-rl',
-                              textOrientation: 'mixed',
-                            }}
-                          >
-                            ← 探索更早的历史
-                          </div>
-                        </div>
-                      )}
-
-                      {/* "再来一个" — only on today (index 0) */}
-                      {index === 0 && (
-                        <div className="px-5 pb-4 border-t border-gray-100 pt-3">
-                          {showExtraCard && extraContent ? (
-                            <div className="extra-card-enter">
-                              <div className="bg-gradient-to-r from-amber-400 to-orange-400 text-white px-4 py-2.5 rounded-xl flex items-center justify-between mb-3 shadow-sm">
-                                <span className="font-medium text-sm">
-                                  再来一个 · 第{chanceState.used}次
-                                </span>
-                                <button
-                                  onClick={dismissExtra}
-                                  className="text-xs bg-white/20 hover:bg-white/30 px-2.5 py-1 rounded-lg transition-colors"
-                                >
-                                  收起
-                                </button>
-                              </div>
-                              <div className="select-text markdown-content">
-                                <MarkdownRenderer content={extraContent} />
-                              </div>
-                              <div
-                                className={`flex items-center justify-center gap-1.5 mt-4 pt-3 border-t border-gray-100 ${
-                                  remaining > 0 ? "cursor-pointer active:opacity-70" : ""
-                                }`}
-                                onClick={remaining > 0 ? handleExtraClick : undefined}
-                              >
-                                {[0, 1, 2].map(i => (
-                                  <div
-                                    key={i}
-                                    className={`w-2 h-2 rounded-full transition-colors duration-300 ${
-                                      i < chanceState.used ? "bg-gray-300" : "bg-brand-500"
-                                    }`}
-                                  />
-                                ))}
-                                <span className="text-xs text-gray-400 ml-1.5">
-                                  {remaining > 0 ? `还能再来 ${remaining} 次 →` : "今日次数已用完"}
-                                </span>
-                              </div>
-                            </div>
-                          ) : extraError ? (
-                            <div className="text-center py-3">
-                              <p className="text-sm text-gray-500">{extraError}</p>
-                            </div>
-                          ) : chanceState.used >= MAX_CHANCES ? (
-                            <div className="text-center py-3">
-                              <div className="flex items-center justify-center gap-1.5 mb-2">
-                                {[0, 1, 2].map(i => (
-                                  <div key={i} className="w-2 h-2 rounded-full bg-gray-300" />
-                                ))}
-                              </div>
-                              <p className="text-sm text-gray-500 font-medium">明天再来 🌙</p>
-                              <p className="text-xs text-gray-400 mt-1">
-                                {formatCountdown(countdown)}后解锁新机会
-                              </p>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={handleExtraClick}
-                              disabled={extraLoading}
-                              className="w-full py-3 rounded-xl font-medium text-sm transition-all duration-200 flex items-center justify-center gap-2
-                                bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 text-amber-700
-                                hover:from-amber-100 hover:to-orange-100 hover:border-amber-300 hover:shadow-sm
-                                active:scale-[0.98]
-                                disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                              {extraLoading ? (
-                                <div className="w-4 h-4 rounded-full border-2 border-amber-300 border-t-amber-600 animate-spin" />
-                              ) : (
-                                <>
-                                  <span className="text-base">🎲</span>
-                                  <span>再来一个为什么？</span>
-                                </>
-                              )}
-                              <div className="flex items-center gap-1 ml-1.5">
-                                {[0, 1, 2].map(i => (
-                                  <div
-                                    key={i}
-                                    className={`w-1.5 h-1.5 rounded-full transition-colors duration-300 ${
-                                      i < chanceState.used ? "bg-gray-300" : "bg-amber-400"
-                                    }`}
-                                  />
-                                ))}
-                              </div>
-                            </button>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {availableDates.map((dateInfo, index) => (
+              <div
+                key={dateInfo.date}
+                ref={(el) => {
+                  if (el) slideRefs.current.set(index, el);
+                }}
+                className="w-full flex-shrink-0 px-4 py-4 relative"
+                style={{ width: slideWidth.current || '100%' }}
+              >
+                <ContentSlide
+                  dateInfo={dateInfo}
+                  content={contentCache[dateInfo.date]}
+                  isLoading={loadingDates.has(dateInfo.date)}
+                  error={errorDates[dateInfo.date]}
+                  isExplore={index > 2}
+                  isToday={index === 0}
+                  index={index}
+                  totalDates={availableDates.length}
+                  translateX={translateX}
+                  isDragging={isDragging}
+                  canSwipeLeft={canSwipeLeft}
+                  slideWidth={slideWidth.current || 0}
+                />
+              </div>
+            ))}
           </div>
         </main>
       )}
@@ -801,61 +288,12 @@ export default function DailyPage() {
       </footer>
 
       {/* Settings Panel */}
-      {showSettings && (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 backdrop-blur-sm animate-fadeIn"
-          onClick={(e) => { if (e.target === e.currentTarget) setShowSettings(false); }}
-        >
-          <div className="w-full max-w-lg bg-white rounded-t-3xl shadow-2xl animate-slideUpPrompt overscroll-contain">
-            {/* Handle bar */}
-            <div className="flex justify-center pt-3 pb-1">
-              <div className="w-10 h-1 bg-gray-300 rounded-full" />
-            </div>
-
-            {/* Title */}
-            <div className="px-6 pb-4">
-              <h2 className="text-xl font-semibold text-gray-900 text-center">设置</h2>
-            </div>
-
-            {/* Content */}
-            <div className="px-6 pb-6">
-              {/* Clear cache */}
-              <div className="bg-gray-50 rounded-xl px-4 py-4 mb-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="text-sm text-gray-700 font-medium">清除缓存</span>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      清除所有本地缓存数据并重新加载
-                    </p>
-                  </div>
-                  <button
-                    onClick={handleClearCache}
-                    disabled={clearingCache}
-                    className="px-4 py-2 rounded-xl text-sm font-medium bg-red-50 text-red-600 border border-red-200 hover:bg-red-100 transition-colors disabled:opacity-50"
-                  >
-                    {clearingCache ? (
-                      <div className="w-4 h-4 rounded-full border-2 border-red-300 border-t-red-600 animate-spin" />
-                    ) : (
-                      "清除"
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Close button */}
-              <button
-                onClick={() => setShowSettings(false)}
-                className="w-full py-3 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                关闭
-              </button>
-            </div>
-
-            {/* Safe area padding for iPhone */}
-            <div className="h-[env(safe-area-inset-bottom,20px)]" />
-          </div>
-        </div>
-      )}
+      <SettingsPanel
+        showSettings={showSettings}
+        clearingCache={clearingCache}
+        handleClearCache={handleClearCacheAndClose}
+        onClose={() => setShowSettings(false)}
+      />
     </div>
   );
 }

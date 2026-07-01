@@ -34,6 +34,9 @@ export default function DebugPanel({ config, saving, onToggle, onClose }: DebugP
   const [debugInfo, setDebugInfo] = useState<string>("");
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugGenDate, setDebugGenDate] = useState<string>("");
+  const [pushTitle, setPushTitle] = useState<string>("");
+  const [pushBody, setPushBody] = useState<string>("");
+  const [pushDeviceId, setPushDeviceId] = useState<string>("");
   const STORAGE_KEY = "daily-why-reminder";
 
   const debugFetchInfo = async () => {
@@ -85,7 +88,11 @@ export default function DebugPanel({ config, saving, onToggle, onClose }: DebugP
   const debugTriggerPush = async () => {
     setDebugLoading(true);
     try {
-      const res = await fetch("/api/push/send?debug=1");
+      const params = new URLSearchParams({ debug: "1" });
+      if (pushTitle.trim()) params.set("title", pushTitle.trim());
+      if (pushBody.trim()) params.set("body", pushBody.trim());
+      if (pushDeviceId.trim()) params.set("deviceId", pushDeviceId.trim());
+      const res = await fetch(`/api/push/send?${params.toString()}`);
       const data = await res.json();
       setDebugInfo(
         `${debugInfo}\n\n=== 推送测试结果 ===\n${JSON.stringify(data, null, 2)}`
@@ -202,6 +209,32 @@ export default function DebugPanel({ config, saving, onToggle, onClose }: DebugP
         >
           清除数据
         </button>
+      </div>
+
+      {/* 自定义推送参数 */}
+      <div className="bg-gray-50 rounded-xl px-3 py-3 mb-4 space-y-2">
+        <p className="text-xs text-gray-500 font-medium">自定义推送（留空走默认）</p>
+        <input
+          type="text"
+          value={pushTitle}
+          onChange={(e) => setPushTitle(e.target.value)}
+          placeholder="标题：每日一个为什么"
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-brand-400"
+        />
+        <input
+          type="text"
+          value={pushBody}
+          onChange={(e) => setPushBody(e.target.value)}
+          placeholder="内容：今天的新问题已更新，来看看吧！"
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-brand-400"
+        />
+        <input
+          type="text"
+          value={pushDeviceId}
+          onChange={(e) => setPushDeviceId(e.target.value)}
+          placeholder="设备ID：留空推送全部"
+          className="w-full px-3 py-2 rounded-lg border border-gray-200 text-sm bg-white focus:outline-none focus:border-brand-400"
+        />
       </div>
 
       {/* AI 内容生成区 — 支持选择近3天日期 */}

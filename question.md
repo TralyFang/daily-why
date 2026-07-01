@@ -12,9 +12,9 @@
 6. ✅ 扩展内容的展开下面的点击再来一次，直接收起，刷新下一条扩展内容展示，目前是需要收起，再点击才行。
 7. ✅ 为什么不全全屏，手机顶部的状态也可以渲染的呀
 8. ✅ 把src/app/api/content/generate/route.ts生成的主题存储到cloudflare，避免重复生成，哪怕是src/app/api/content/generate/route.ts 执行了内容覆盖也不能重复。因为被覆盖的内容丢失了，所有需要保存一份已经生成过的主题清单
-9. 问题2 的日期列表 `GET /api/content`带一个当天的时间参数，避免同一天的多次请求
-10. src/components/DailyPage.tsx 目前的代码量太多了，需要拆分到做到文件
-11. 调试模式的立即推送，希望可以自定义标题和内容和指定的设配ID，默认可以不填走原来的逻辑
+9. ✅ 问题2 的日期列表 `GET /api/content`带一个当天的时间参数，避免同一天的多次请求
+10. ✅ src/components/DailyPage.tsx 目前的代码量太多了，需要拆分到做到文件
+11. ✅ 调试模式的立即推送，希望可以自定义标题和内容和指定的设配ID，默认可以不填走原来的逻辑
 
 ---
 
@@ -223,3 +223,102 @@ const handleSave = async () => {
 - 当清单过大（>200条）时，只保留最近 100 条在 prompt 中，但全量数据不删
 
 **涉及文件**：`src/app/api/content/generate/route.ts`（或 Cloudflare Worker 中对应的生成逻辑）
+
+---
+
+## 第四批：缓存优化 + 代码拆分 + 调试增强（问题 9 + 10 + 11）
+
+### 问题 9：日期列表 stale-while-revalidate
+
+**需求**：打开 PWA 时日期列表秒出（从缓存），同时后台静默请求网络确认是否有更新，有更新则自动覆盖页面。
+
+**方案（路径 B：纯 stale-while-revalidate，每次后台静默请求网络）**：
+
+**SW 层**（`public/sw.js`）：
+
+对 `/api/content` 无 `date` 参数的请求：
+1. 查缓存（key 固定为 `/api/content`，strip 掉 `_d`、`_t` 等参数）
+2. 有缓存 → 立即返回给客户端（秒出）
+3. 同时后台 fetch 网络（每次都请求，日期列表很小几百字节可忽略）
+4. 网络返回后对比新旧 response body：
+   - 不同 → 更新缓存 + postMessage `DATES_UPDATED` 通知所有客户端
+   - 相同 → 仅更新缓存（保持新鲜）
+5. 无缓存 → 等网络返回，写入缓存
+
+**客户端层**（`src/components/DailyPage.tsx`）：
+
+- `fetchDates()` 请求 `/api/content`（不带 `_d` 参数，让 SW 用固定 key 匹配缓存）
+- 监听 SW 的 `DATES_UPDATED` 消息：
+  - 收到后调用 `fetchDates()` 重新加载（此时 SW 缓存已是最新，秒返回）
+  - 对比新旧 availableDates，有变化则无缝更新页面
+
+**完整时序**：
+
+```
+用户打开 PWA
+  → fetchDates() 发出请求
+  → SW 查缓存命中 → 立即返回（页面秒出日期列表 + 加载内容）
+  → SW 后台 fetch 网络（~200ms）
+  → 网络返回，对比发现日期列表有变化
+  → SW 更新缓存 + postMessage('DATES_UPDATED')
+  → 客户端收到消息 → fetchDates()（命中新缓存）→ 页面无缝更新
+```
+
+**边界情况**：
+- 首次安装从未打开过：无缓存，走网络等待（正常 loading）
+- 日期列表没变化：后台静默返回，不通知客户端，无感知
+- 离线：返回缓存，后台 fetch 失败静默忽略
+
+**涉及文件**：
+- `public/sw.js`：日期列表策略改为 stale-while-revalidate + 变化检测 + postMessage
+- `src/components/DailyPage.tsx`：去掉 `_d` 参数，监听 `DATES_UPDATED` 消息触发 fetchDates
+
+---
+
+### 问题 10：DailyPage.tsx 拆分
+
+**现状**：DailyPage.tsx 约 800+ 行，包含状态管理、手势处理、轮播、扩展内容、设置面板等所有逻辑。
+
+**拆分方案**：
+
+| 新文件 | 职责 | 提取内容 |
+|--------|------|----------|
+| `src/hooks/useContentLoader.ts` | 数据加载逻辑 | fetchDates、loadContent、contentCache、errorDates、loadingDates、datesLoaded |
+| `src/hooks/useSwipeGesture.ts` | 滑动手势 | dragStartX/Y、dragDeltaX、directionLock、translateX、isDragging、所有 drag handlers |
+| `src/components/SettingsPanel.tsx` | 设置弹窗 | showSettings、clearingCache、handleClearCache、弹窗 UI |
+| `src/components/ExtraContent.tsx` | 扩展内容 | chanceState、extraContent、extraLoading、extraError、showExtraCard、handleExtraClick、相关 UI |
+| `src/components/ContentSlide.tsx` | 单页内容卡片 | 单个 slide 的渲染逻辑（标题栏 + Markdown 内容 + 探索提示） |
+
+**DailyPage.tsx 保留**：
+- 组合各 hook 和子组件
+- header + footer 布局
+- currentIndex、availableDates 状态
+- safe-area padding 和 header visible 逻辑
+
+**涉及文件**：新增 5 个文件，重构 `src/components/DailyPage.tsx`
+
+---
+
+### 问题 11：调试模式自定义推送
+
+**需求**：调试面板的"立即推送"支持自定义标题、内容和指定设备ID，默认留空走原有逻辑。
+
+**方案**：
+
+前端（`src/components/DebugPanel.tsx`）：
+- 在"立即推送"按钮上方添加三个可选输入框：
+  - 标题（placeholder: "每日一个为什么"）
+  - 内容（placeholder: "今天的新问题已更新，来看看吧！"）
+  - 设备ID（placeholder: "留空推送全部"）
+- 留空走默认逻辑，填了传自定义参数
+- 请求改为：`/api/push/send?debug=1&title=xxx&body=xxx&deviceId=xxx`
+
+后端（`src/app/api/push/send/route.ts`）：
+- GET handler 读取额外 query 参数：`title`、`body`、`deviceId`
+- 传入 `handleCron(debug, { title, body, targetDeviceId })`
+- `handleCron` 内部：
+  - `targetDeviceId` 有值 → 只过滤该设备的 subscription 发送
+  - `title`/`body` 有值 → 替换推送 payload 中的默认文案
+  - 都没填 → 保持原有逻辑不变
+
+**涉及文件**：`src/components/DebugPanel.tsx`、`src/app/api/push/send/route.ts`

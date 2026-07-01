@@ -21,18 +21,28 @@ async function getKV() {
 
 // GET for manual testing / cron trigger via HTTP
 // ?debug=1 bypasses time window & daily dedup (for testing)
+// ?title=xxx&body=xxx&deviceId=xxx for custom push content/target
 // POST for programmatic calls (cron worker)
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const debug = url.searchParams.get("debug") === "1";
-  return handleCron(debug);
+  const customTitle = url.searchParams.get("title") || undefined;
+  const customBody = url.searchParams.get("body") || undefined;
+  const targetDeviceId = url.searchParams.get("deviceId") || undefined;
+  return handleCron(debug, { title: customTitle, body: customBody, targetDeviceId });
 }
 
 export async function POST() {
-  return handleCron(false);
+  return handleCron(false, {});
 }
 
-async function handleCron(debug: boolean = false) {
+interface PushOptions {
+  title?: string;
+  body?: string;
+  targetDeviceId?: string;
+}
+
+async function handleCron(debug: boolean = false, options: PushOptions = {}) {
   const results: { sent: string[]; skipped: string[]; cleaned: string[]; errors: string[] } = {
     sent: [],
     skipped: [],
@@ -106,6 +116,11 @@ async function handleCron(debug: boolean = false) {
     let anySent = false;
 
     for (const sub of subscriptions) {
+      // If targeting a specific device, skip all others
+      if (options.targetDeviceId && sub.deviceId !== options.targetDeviceId) {
+        continue;
+      }
+
       // Check if user visited today — skip if they already came (skip in debug mode)
       if (!debug && sub.lastVisitedDate === todayStr) {
         results.skipped.push(`already-visited:${sub.deviceId}`);
@@ -131,8 +146,8 @@ async function handleCron(debug: boolean = false) {
         await webpush.sendNotification(
           pushSubscription,
           JSON.stringify({
-            title: "每日一个为什么",
-            body: "今天的新问题已更新，来看看吧！",
+            title: options.title || "每日一个为什么",
+            body: options.body || "今天的新问题已更新，来看看吧！",
             url: "/",
           })
         );
