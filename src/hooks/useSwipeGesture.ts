@@ -63,6 +63,22 @@ export function useSwipeGesture({
     return () => window.removeEventListener("resize", updateWidth);
   }, [datesLoaded]);
 
+  // Native touchmove listener with passive:false to enable preventDefault for direction lock
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const handleNativeTouchMove = (e: TouchEvent) => {
+      // Only preventDefault when we've locked to horizontal direction
+      if (directionLock.current === "horizontal") {
+        e.preventDefault();
+      }
+    };
+
+    el.addEventListener("touchmove", handleNativeTouchMove, { passive: false });
+    return () => el.removeEventListener("touchmove", handleNativeTouchMove);
+  }, [datesLoaded]);
+
   const navigateTo = useCallback((index: number) => {
     onNavigate(index);
     setTranslateX(0);
@@ -150,21 +166,7 @@ export function useSwipeGesture({
   };
 
   const onTouchMove = (e: React.TouchEvent) => {
-    const clientX = e.touches[0].clientX;
-    const clientY = e.touches[0].clientY;
-    const deltaX = Math.abs(clientX - dragStartX.current);
-    const deltaY = Math.abs(clientY - dragStartY.current);
-    if (directionLock.current === "undetermined" && (deltaX > 8 || deltaY > 8)) {
-      if (deltaX > deltaY) {
-        directionLock.current = "horizontal";
-      } else {
-        directionLock.current = "vertical";
-      }
-    }
-    if (directionLock.current === "horizontal") {
-      e.preventDefault();
-    }
-    handleDragMove(clientX, clientY);
+    handleDragMove(e.touches[0].clientX, e.touches[0].clientY);
   };
 
   const onTouchEnd = () => { handleDragEnd(); };

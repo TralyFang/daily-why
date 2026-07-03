@@ -15,6 +15,8 @@
 9. ✅ 问题2 的日期列表 `GET /api/content`带一个当天的时间参数，避免同一天的多次请求
 10. ✅ src/components/DailyPage.tsx 目前的代码量太多了，需要拆分到做到文件
 11. ✅ 调试模式的立即推送，希望可以自定义标题和内容和指定的设配ID，默认可以不填走原来的逻辑
+12. ✅ 手机通知权限还是无法正常被触发
+13. ✅ 自从整理了DailyPage代码，内容区域滑动方向锁定失效了
 
 ---
 
@@ -310,6 +312,65 @@ const handleSave = async () => {
 - 从组件提取 hook 时，所有在事件处理函数中引用的 state/props 都要考虑闭包陷阱，用 ref 做同步镜像
 - carousel 轮播容器的固定高度模式下，子内容动态变化必须有高度同步机制（ResizeObserver 或 MutationObserver）
 - `containerRef` 类型从 `RefObject<HTMLElement>` 改为 `RefObject<HTMLElement | null>` 以兼容 React 19 的 ref 初始化，使用时通过 `as React.RefObject<HTMLElement>` 断言
+
+---
+
+---
+
+## 通知权限兼容性注意事项
+
+### iOS PWA（Safari 16.4+）
+
+| 问题 | 表现 | 原因 | 解决方案 |
+|------|------|------|----------|
+| 首次 permission 为 "denied" | 用户从未操作过权限弹窗，但 `Notification.permission` 返回 `"denied"` | iOS PWA 首次启动时的默认行为与 W3C 规范不一致（规范应返回 `"default"`） | 在 iOS 上，即使 permission 为 "denied" 也尝试调用 `requestPermission()`，让系统弹出真正的权限弹窗 |
+| requestPermission 必须在用户手势中 | 非用户手势触发的 `requestPermission()` 会静默失败（不弹窗） | iOS Safari 强制要求权限请求在用户点击/触摸的同步调用栈中 | 将 `requestPermission()` 放在 click handler 的第一个 await point |
+| auto-sync 误取消订阅 | 每次打开 app 都检测到 "denied" → 自动 unsubscribe | iOS 的 "denied" 不等于"用户主动拒绝" | iOS 上跳过 auto-sync 的 denied 检测逻辑 |
+
+**关键代码模式：**
+```typescript
+// iOS 兼容：首次 denied 也尝试请求权限
+const shouldRequest = perm === "default" || (perm === "denied" && isIOS());
+if (shouldRequest) {
+  perm = await Notification.requestPermission();
+}
+```
+
+### Android（Chrome PWA）
+
+| 问题 | 表现 | 原因 | 解决方案 |
+|------|------|------|----------|
+| 系统关闭通知后 permission 仍为 "granted" | 用户在系统设置中关闭了 App 通知，但 `Notification.permission` 仍返回 `"granted"` | `Notification.permission` 只反映浏览器层面的授权状态，不同步系统通知开关 | 使用 `navigator.permissions.query({ name: "notifications" })` 检测更准确的系统级状态 |
+| showNotification 静默失败 | 调用 `registration.showNotification()` 不报错但通知不展示 | 系统级通知被关闭时，showNotification 通常不抛异常 | Permissions API 作为主要检测手段，showNotification 作为兜底验证 |
+
+**关键代码模式：**
+```typescript
+// 使用 Permissions API 检测 Android 系统级权限
+const checkPermissionAsync = async (): Promise<string> => {
+  if ("permissions" in navigator) {
+    try {
+      const status = await navigator.permissions.query({ name: "notifications" });
+      // status.state 能反映系统级开关："granted" | "denied" | "prompt"
+      return status.state === "denied" ? "denied" 
+           : status.state === "granted" ? "granted" 
+           : "default";
+    } catch { /* fallback */ }
+  }
+  return Notification.permission; // 兜底
+};
+```
+
+**Permissions API 兼容性：**
+- Android Chrome 75+：支持
+- iOS Safari：不支持 `notifications` 查询（会抛异常，需 try-catch）
+- 桌面 Chrome/Firefox/Edge：支持
+
+### 通用注意事项
+
+1. **永远不要只依赖 `Notification.permission`** — 它在 iOS 和 Android 上都有不可靠的场景
+2. **权限检测优先级链：** Permissions API → Notification.permission → showNotification 验证
+3. **用户引导很重要：** 当检测到权限被拒/关闭时，展示系统设置操作步骤（iOS/Android 分别引导）
+4. **auto-sync 要谨慎：** 挂载时自动取消订阅的逻辑必须考虑平台差异，避免误操作
 
 ---
 

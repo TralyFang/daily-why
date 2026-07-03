@@ -90,6 +90,16 @@ function openSystemNotificationSettings(): boolean {
   return false;
 }
 
+// ---- debug logger ----
+function notifLog(msg: string, data?: Record<string, unknown>) {
+  const prefix = "[Notification]";
+  if (data) {
+    console.info(`${prefix} ${msg}`, data);
+  } else {
+    console.info(`${prefix} ${msg}`);
+  }
+}
+
 // ---- component ----
 
 export default function ReminderSettings() {
@@ -115,33 +125,86 @@ export default function ReminderSettings() {
     setDraftEnabled(c.enabled);
     const canEnable = isMobileDevice() ? isStandaloneMode() : isPushSupported();
     setStandalone(canEnable);
+
+    notifLog("组件挂载 初始化", {
+      savedConfig: c,
+      isMobile: isMobileDevice(),
+      isStandalone: isStandaloneMode(),
+      isPushSupported: isPushSupported(),
+      canEnable,
+      isIOS: isIOS(),
+      isAndroid: isAndroid(),
+      hasNotificationAPI: typeof window !== "undefined" && "Notification" in window,
+      notificationPermission: typeof window !== "undefined" && "Notification" in window ? Notification.permission : "N/A",
+      hasPushManager: typeof window !== "undefined" && "PushManager" in window,
+      hasServiceWorker: typeof navigator !== "undefined" && "serviceWorker" in navigator,
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : "N/A",
+    });
+
     if (c.enabled) checkPermission();
   }, []);
 
-  // Check notification permission
+  // Check notification permission (enhanced: uses Permissions API on Android for system-level detection)
   const checkPermission = useCallback(() => {
     if (typeof window === "undefined") return "denied";
     if ("Notification" in window) {
-      setPermissionDenied(Notification.permission === "denied");
-      return Notification.permission;
+      const perm = Notification.permission;
+      setPermissionDenied(perm === "denied");
+      return perm;
     }
     return "denied";
   }, []);
 
-  // Auto-sync: if permission was revoked, auto-unsubscribe
+  // Enhanced permission check using Permissions API (detects Android system-level toggle)
+  const checkPermissionAsync = useCallback(async (): Promise<string> => {
+    if (typeof window === "undefined") return "denied";
+
+    // Use Permissions API if available — more accurate on Android
+    if ("permissions" in navigator) {
+      try {
+        const status = await navigator.permissions.query({ name: "notifications" as PermissionName });
+        notifLog("Permissions API 查询结果", { state: status.state, notificationPerm: Notification.permission });
+        if (status.state === "denied") {
+          setPermissionDenied(true);
+          return "denied";
+        }
+        if (status.state === "granted") {
+          setPermissionDenied(false);
+          return "granted";
+        }
+        // "prompt" means not yet decided
+        return "default";
+      } catch {
+        // Fallback to Notification.permission
+      }
+    }
+
+    if ("Notification" in window) {
+      const perm = Notification.permission;
+      setPermissionDenied(perm === "denied");
+      return perm;
+    }
+    return "denied";
+  }, []);
+
+  // Auto-sync: if permission was revoked (including system-level on Android), auto-unsubscribe
+  // On iOS, skip this check since iOS PWA may report "denied" even before first prompt
   useEffect(() => {
     if (!config.enabled) return;
     if (typeof window === "undefined") return;
+    if (isIOS()) return; // iOS 首次可能误报 denied，跳过自动取消订阅
 
-    const perm = checkPermission();
-    if (perm === "denied") {
-      unsubscribe().then(() => {
-        const updated = { ...config, enabled: false };
-        setConfig(updated);
-        setDraftEnabled(false);
-        saveConfig(updated);
-      });
-    }
+    checkPermissionAsync().then((perm) => {
+      if (perm === "denied") {
+        notifLog("auto-sync: 检测到权限已被撤销，自动取消订阅", { perm });
+        unsubscribe().then(() => {
+          const updated = { ...config, enabled: false };
+          setConfig(updated);
+          setDraftEnabled(false);
+          saveConfig(updated);
+        });
+      }
+    });
   }, []);
 
   // Subscribe to push
@@ -210,33 +273,52 @@ export default function ReminderSettings() {
   // Handle toggle — request permission immediately on user gesture (critical for iOS)
   const handleToggle = async () => {
     const newValue = !draftEnabled;
+    notifLog("handleToggle 触发", { newValue, currentDraftEnabled: draftEnabled });
 
     if (newValue) {
       // Turning ON: request permission immediately in the user gesture callstack
       if (!("Notification" in window)) {
+        notifLog("Notification API 不存在于 window");
         setSaveError("此浏览器不支持通知功能");
         return;
       }
 
       let perm = Notification.permission;
-      if (perm === "default") {
-        // This MUST be the first await after user gesture for iOS to show the system prompt
-        perm = await Notification.requestPermission();
+      notifLog("当前 Notification.permission", { perm, isIOS: isIOS() });
+
+      // iOS PWA 首次可能直接返回 "denied"（未曾弹窗过），需要也尝试 requestPermission
+      const shouldRequest = perm === "default" || (perm === "denied" && isIOS());
+
+      if (shouldRequest) {
+        notifLog("即将调用 requestPermission()...", { reason: perm === "default" ? "default状态" : "iOS首次denied兼容" });
+        try {
+          perm = await Notification.requestPermission();
+          notifLog("requestPermission() 返回", { perm });
+        } catch (err) {
+          notifLog("requestPermission() 抛出异常", { error: String(err) });
+          setSaveError(`请求权限异常: ${err}`);
+          return;
+        }
+      } else {
+        notifLog("跳过 requestPermission()", { perm });
       }
 
       if (perm === "denied") {
+        notifLog("权限被拒绝 → 显示 permissionDenied UI");
         setPermissionDenied(true);
         // Don't toggle the switch
         return;
       }
 
       if (perm !== "granted") {
+        notifLog("权限未授予（可能被 dismissed）", { perm });
         // User dismissed without granting (e.g. closed the prompt)
         setSaveError("未获得通知权限，请重试或在系统设置中开启");
         return;
       }
 
       // Permission granted
+      notifLog("权限已授予 ✓");
       setPermissionDenied(false);
       setSaveError(null);
     }
@@ -248,11 +330,14 @@ export default function ReminderSettings() {
   const handleSave = async () => {
     setSaving(true);
     setSaveError(null);
+    notifLog("handleSave 触发", { draftEnabled });
     try {
       if (draftEnabled) {
-        // Double-check permission (may have been revoked between toggle and save)
-        const perm = Notification.permission;
+        // Double-check permission using Permissions API (catches Android system-level revoke)
+        const perm = await checkPermissionAsync();
+        notifLog("保存前二次检查权限(async)", { perm });
         if (perm !== "granted") {
+          notifLog("保存时权限不是 granted → 中止");
           setPermissionDenied(true);
           setSaving(false);
           return;
@@ -301,14 +386,17 @@ export default function ReminderSettings() {
     if (isAndroid()) {
       openSystemNotificationSettings();
     }
-    // After user claims they enabled it, re-check the permission
+    // After user claims they enabled it, re-check the permission using Permissions API
     // Small delay for Android to let the user come back from settings
-    await new Promise(resolve => setTimeout(resolve, 500));
-    const perm = checkPermission();
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    const perm = await checkPermissionAsync();
+    notifLog("重新检测权限结果", { perm });
     if (perm === "granted") {
       setPermissionDenied(false);
       setSaveError(null);
       setDraftEnabled(true);
+    } else {
+      setSaveError("权限仍未开启，请确认已在系统设置中允许通知");
     }
   };
 
@@ -386,7 +474,9 @@ export default function ReminderSettings() {
       setSaving(true);
       try {
         let perm = Notification.permission;
-        if (perm === "default") {
+        // iOS PWA 首次可能返回 "denied"（未曾弹窗过），也需要尝试请求
+        const shouldRequest = perm === "default" || (perm === "denied" && isIOS());
+        if (shouldRequest) {
           perm = await Notification.requestPermission();
         }
         if (perm === "granted") {

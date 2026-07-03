@@ -255,6 +255,7 @@ export default function DailyPage() {
           style={{
             height: containerHeight ? `${containerHeight}px` : undefined,
             minHeight: "200px",
+            touchAction: "pan-y pinch-zoom",
             transition: isDragging ? "none" : "height 300ms cubic-bezier(0.25, 0.1, 0.25, 1)",
           }}
         >

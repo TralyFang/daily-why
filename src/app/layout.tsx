@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import ServiceWorkerRegistration from "@/components/ServiceWorkerRegistration";
 import InstallPrompt from "@/components/InstallPrompt";
+import ConsoleOverlay from "@/components/ConsoleOverlay";
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -40,6 +41,7 @@ export default function RootLayout({
   return (
     <html lang="zh-CN">
       <body className="font-sans">
+        <ConsoleOverlay />
         <ServiceWorkerRegistration />
         <InstallPrompt />
         {children}
