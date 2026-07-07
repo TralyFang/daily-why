@@ -30,6 +30,8 @@ export default function DailyPage() {
     loadingDates,
     errorDates,
     datesLoaded,
+    retryingDates,
+    retryGenerateContent,
     handleRefresh,
     handleClearCache,
     clearingCache,
@@ -291,6 +293,8 @@ export default function DailyPage() {
                   isDragging={isDragging}
                   canSwipeLeft={canSwipeLeft}
                   slideWidth={slideWidth.current || 0}
+                  retrying={retryingDates.has(dateInfo.date)}
+                  onRetryGenerate={retryGenerateContent}
                 />
               </div>
             ))}

@@ -164,4 +164,37 @@ describe("/api/content/generate GET", () => {
     expect(mockKV["2026-06-29"]).toContain("为什么海水是咸的？");
     expect(mockKV["2026-06-29-extra-1"]).toContain("为什么叶子会变黄？");
   });
+
+  it("slot=main 时只重生主内容", async () => {
+    const req = new Request(
+      "http://localhost/api/content/generate?force=1&date=2026-06-29&slot=main"
+    );
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].key).toBe("2026-06-29");
+  });
+
+  it("slot=extra-2 时只重生指定副内容", async () => {
+    const req = new Request(
+      "http://localhost/api/content/generate?force=1&date=2026-06-29&slot=extra-2"
+    );
+    const res = await GET(req);
+    const data = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(data.results).toHaveLength(1);
+    expect(data.results[0].key).toBe("2026-06-29-extra-2");
+  });
+
+  it("slot 参数不合法时返回 400", async () => {
+    const req = new Request(
+      "http://localhost/api/content/generate?force=1&date=2026-06-29&slot=extra-9"
+    );
+    const res = await GET(req);
+
+    expect(res.status).toBe(400);
+  });
 });

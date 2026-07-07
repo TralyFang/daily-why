@@ -3,6 +3,8 @@
 import MarkdownRenderer from "./MarkdownRenderer";
 import ExtraContent from "./ExtraContent";
 import type { DateInfo } from "../hooks/useContentLoader";
+import RetryGenerateButton from "./RetryGenerateButton";
+import { isGenerationFailureContent } from "../lib/contentFailure";
 
 export interface ContentSlideProps {
   dateInfo: DateInfo;
@@ -17,6 +19,8 @@ export interface ContentSlideProps {
   isDragging: boolean;
   canSwipeLeft: boolean;
   slideWidth: number;
+  retrying: boolean;
+  onRetryGenerate: (date: string) => void | Promise<void>;
 }
 
 export default function ContentSlide({
@@ -32,6 +36,8 @@ export default function ContentSlide({
   isDragging,
   canSwipeLeft,
   slideWidth,
+  retrying,
+  onRetryGenerate,
 }: ContentSlideProps) {
   if (isLoading && !content) {
     return (
@@ -70,7 +76,15 @@ export default function ContentSlide({
       {/* Content */}
       <div className="px-5 py-5 select-text overflow-y-auto">
         {content ? (
-          <MarkdownRenderer content={content} />
+          <>
+            <MarkdownRenderer content={content} />
+            {isGenerationFailureContent(content) && (
+              <RetryGenerateButton
+                disabled={retrying}
+                onClick={() => onRetryGenerate(dateInfo.date)}
+              />
+            )}
+          </>
         ) : (
           <p className="text-gray-400 text-center py-8">内容加载中...</p>
         )}

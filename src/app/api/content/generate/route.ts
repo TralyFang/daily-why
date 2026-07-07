@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getCloudflareContext } from "@opennextjs/cloudflare";
+import { buildGenerationFailureContent } from "@/lib/contentFailure";
 
 export const dynamic = "force-dynamic";
 
@@ -33,6 +34,14 @@ function pickRandom(arr: string[], n: number): string[] {
 const TOPICS_HISTORY_KEY = "topics-history";
 const TOPICS_HISTORY_MAX_IN_PROMPT = 100; // Only include last 100 in AI prompt
 const MAX_GENERATE_ATTEMPTS = 7;
+
+type GenerationSlot = "main" | "extra-1" | "extra-2" | "extra-3";
+
+interface GenerationTarget {
+  key: string;
+  ttl: number;
+  slot: GenerationSlot;
+}
 
 async function getTopicsHistory(kv: unknown): Promise<string[]> {
   try {
@@ -75,10 +84,40 @@ function pickRetryTopic(usedTopics: string[], attemptedTopics: Set<string>): str
   return pickRandom(TOPICS, 1)[0];
 }
 
+function parseGenerationSlot(slotParam: string | null): GenerationSlot | null {
+  if (!slotParam) return null;
+  if (slotParam === "main" || slotParam === "extra-1" || slotParam === "extra-2" || slotParam === "extra-3") {
+    return slotParam;
+  }
+  return null;
+}
+
+function buildGenerationTargets(date: string, slot: GenerationSlot | null, isToday: boolean): GenerationTarget[] {
+  if (slot === "main") {
+    return [{ key: date, ttl: KV_TTL_MAIN, slot }];
+  }
+
+  if (slot && slot.startsWith("extra-")) {
+    return [{ key: `${date}-${slot}`, ttl: KV_TTL_EXTRA, slot }];
+  }
+
+  if (!isToday) {
+    return [{ key: date, ttl: KV_TTL_MAIN, slot: "main" }];
+  }
+
+  return [
+    { key: date, ttl: KV_TTL_MAIN, slot: "main" },
+    { key: `${date}-extra-1`, ttl: KV_TTL_EXTRA, slot: "extra-1" },
+    { key: `${date}-extra-2`, ttl: KV_TTL_EXTRA, slot: "extra-2" },
+    { key: `${date}-extra-3`, ttl: KV_TTL_EXTRA, slot: "extra-3" },
+  ];
+}
+
 async function generateArticle(
   ai: unknown,
   topic: string,
   index: number,
+  totalArticles: number,
   historyTitles: string[]
 ): Promise<string> {
   const historyHint = historyTitles.length > 0
@@ -88,7 +127,7 @@ async function generateArticle(
   const prompt = `你是一个科普作家，负责为"每日一个为什么"网站创作内容。请根据以下要求生成一篇文章：
 
 主题领域：${topic}
-文章编号：第${index + 1}篇（共4篇，每篇主题必须不同）
+文章编号：第${index + 1}篇（共${totalArticles}篇，每篇主题必须不同）
 
 要求：
 1. 标题格式：# 为什么XXX？（必须以"为什么"开头，提出一个有趣的科普问题）
@@ -148,6 +187,7 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const forceRegenerate = searchParams.get("force") === "1";
   const dateParam = searchParams.get("date"); // 支持指定日期，如 ?date=2026-06-28
+  const slotParam = searchParams.get("slot");
 
   try {
     const ctx = await getCloudflareContext({ async: true });
@@ -166,17 +206,26 @@ export async function GET(request: Request) {
     // 支持指定日期，默认今天
     const today = dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam) ? dateParam : getBeijingToday();
     const actualToday = getBeijingToday();
+    const requestedSlot = parseGenerationSlot(slotParam);
+    if (slotParam && !requestedSlot) {
+      return NextResponse.json(
+        { error: "slot 参数不正确" },
+        { status: 400 }
+      );
+    }
     // 非当天只生成1篇主内容（不需要extra）
     const isToday = today === actualToday;
-    const articleCount = isToday ? 4 : 1;
+    const targets = buildGenerationTargets(today, requestedSlot, isToday);
+    const articleCount = targets.length;
 
     // Check if content already exists
     if (!forceRegenerate) {
-      const existing = await kv.get(today, { type: "text" });
+      const existingKey = targets[0].key;
+      const existing = await kv.get(existingKey, { type: "text" });
       if (existing) {
         return NextResponse.json({
           status: "skipped",
-          message: `${today} 已有内容，跳过生成。加 ?force=1 可强制重新生成`,
+          message: `${existingKey} 已有内容，跳过生成。加 ?force=1 可强制重新生成`,
           today,
         });
       }
@@ -184,8 +233,6 @@ export async function GET(request: Request) {
 
     // Pick topics based on article count (today=4, other days=1)
     const selectedTopics = pickRandom(TOPICS, articleCount);
-    const allKeys = [today, `${today}-extra-1`, `${today}-extra-2`, `${today}-extra-3`];
-    const keys = allKeys.slice(0, articleCount);
     const results: { key: string; content: string; status: string }[] = [];
     const resolvedTopics: string[] = [];
 
@@ -207,7 +254,7 @@ export async function GET(request: Request) {
         try {
           attemptedTopics.add(currentTopic);
           const seenTitles = [...historyTitles, ...newTitles];
-          content = await generateArticle(ai, currentTopic, i, seenTitles);
+          content = await generateArticle(ai, currentTopic, i, articleCount, seenTitles);
           const validation = validateGeneratedArticle(content, seenTitles);
           if (validation.valid) {
             title = validation.title;
@@ -228,16 +275,14 @@ export async function GET(request: Request) {
 
       resolvedTopics.push(currentTopic);
       if (!title) {
-        content = `# 为什么今天的内容还没准备好？\n\n很抱歉，今天的内容生成遇到了一些技术问题。\n\n错误信息：${lastError}\n\n> 好奇心永不过期，明天再来探索新问题！`;
-        results.push({ key: keys[i], content, status: `failed (${lastError})` });
+        content = buildGenerationFailureContent(lastError);
+        results.push({ key: targets[i].key, content, status: `failed (${lastError})` });
       } else {
-        results.push({ key: keys[i], content, status: "ok" });
+        results.push({ key: targets[i].key, content, status: "ok" });
         newTitles.push(title);
       }
 
-      // Write to KV: 主内容 7 天，副内容 1 天
-      const ttl = i === 0 ? KV_TTL_MAIN : KV_TTL_EXTRA;
-      await kv.put(keys[i], content, { expirationTtl: ttl });
+      await kv.put(targets[i].key, content, { expirationTtl: targets[i].ttl });
     }
 
     // Persist new titles to topics history (no TTL — permanent)

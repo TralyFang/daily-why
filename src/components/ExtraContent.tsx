@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import MarkdownRenderer from "./MarkdownRenderer";
+import RetryGenerateButton from "./RetryGenerateButton";
+import { isGenerationFailureContent } from "../lib/contentFailure";
 
 interface ChanceState {
   date: string;
@@ -105,6 +107,8 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
   } = useExtraContentState();
 
   const [countdown, setCountdown] = useState<number>(getSecondsUntilMidnight());
+  const [currentExtraKey, setCurrentExtraKey] = useState<string | null>(null);
+  const [retryingExtra, setRetryingExtra] = useState<boolean>(false);
 
   // countdown timer
   useEffect(() => {
@@ -137,6 +141,7 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
       const data = await res.json();
       if (data.content) {
         setExtraContent(data.content);
+        setCurrentExtraKey(extraKey);
         setShowExtraCard(true);
         const newState = { date: chanceState.date, used: nextSlot };
         setChanceState(newState);
@@ -153,6 +158,34 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
 
   const dismissExtra = () => {
     setShowExtraCard(false);
+  };
+
+  const handleRetryGenerate = async () => {
+    if (!currentExtraKey || retryingExtra) return;
+
+    const slotMatch = currentExtraKey.match(/(extra-[1-3])$/);
+    if (!slotMatch) return;
+
+    setRetryingExtra(true);
+    setExtraError(null);
+    try {
+      const regenerateRes = await fetch(`/api/content/generate?force=1&date=${todayDate}&slot=${slotMatch[1]}`);
+      if (!regenerateRes.ok) {
+        throw new Error("生成失败");
+      }
+
+      const contentRes = await fetch(`/api/content?date=${currentExtraKey}&_refresh=1`);
+      const data = await contentRes.json();
+      if (data.content) {
+        setExtraContent(data.content);
+      } else {
+        throw new Error(data.error || "加载失败");
+      }
+    } catch {
+      setExtraError("重新生成失败，请稍后再试");
+    } finally {
+      setRetryingExtra(false);
+    }
   };
 
   return (
@@ -173,6 +206,15 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
           <div className="select-text markdown-content">
             <MarkdownRenderer content={extraContent} />
           </div>
+          {isGenerationFailureContent(extraContent) && (
+            <RetryGenerateButton
+              disabled={retryingExtra}
+              onClick={handleRetryGenerate}
+            />
+          )}
+          {extraError && (
+            <p className="mt-3 text-sm text-red-500">{extraError}</p>
+          )}
           <div
             className={`flex items-center justify-center gap-1.5 mt-4 pt-3 border-t border-gray-100 ${
               remaining > 0 ? "cursor-pointer active:opacity-70" : ""

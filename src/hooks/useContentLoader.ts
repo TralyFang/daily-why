@@ -17,8 +17,10 @@ export interface UseContentLoaderReturn {
   loadingDates: Set<string>;
   errorDates: Record<string, string>;
   datesLoaded: boolean;
+  retryingDates: Set<string>;
   fetchDates: (options?: FetchDatesOptions) => Promise<void>;
   loadContent: (date: string, forceRefresh?: boolean) => Promise<void>;
+  retryGenerateContent: (date: string) => Promise<void>;
   handleRefresh: () => Promise<void>;
   handleClearCache: () => Promise<void>;
   clearingCache: boolean;
@@ -44,6 +46,7 @@ export function useContentLoader(
   const [errorDates, setErrorDates] = useState<Record<string, string>>({});
   const [datesLoaded, setDatesLoaded] = useState<boolean>(false);
   const [clearingCache, setClearingCache] = useState<boolean>(false);
+  const [retryingDates, setRetryingDates] = useState<Set<string>>(new Set());
 
   const currentIndexRef = useRef<number>(0);
   const availableDatesRef = useRef<DateInfo[]>([]);
@@ -165,6 +168,25 @@ export function useContentLoader(
     await loadContent(currentDate, true);
   }, [fetchDates, loadContent, availableDates, currentIndex, onClearExtraState]);
 
+  const retryGenerateContent = useCallback(async (date: string) => {
+    setRetryingDates((prev) => new Set([...prev, date]));
+    try {
+      const res = await fetch(`/api/content/generate?force=1&date=${date}&slot=main`);
+      if (!res.ok) {
+        throw new Error("生成失败");
+      }
+      await loadContent(date, true);
+    } catch {
+      setErrorDates((prev) => ({ ...prev, [date]: "重新生成失败，请稍后再试" }));
+    } finally {
+      setRetryingDates((prev) => {
+        const next = new Set(prev);
+        next.delete(date);
+        return next;
+      });
+    }
+  }, [loadContent]);
+
   const handleClearCache = useCallback(async () => {
     setClearingCache(true);
     try {
@@ -222,8 +244,10 @@ export function useContentLoader(
     loadingDates,
     errorDates,
     datesLoaded,
+    retryingDates,
     fetchDates,
     loadContent,
+    retryGenerateContent,
     handleRefresh,
     handleClearCache,
     clearingCache,
