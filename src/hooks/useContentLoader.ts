@@ -1,6 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { buildContentRequestUrl, buildDatesRequestUrl } from "../lib/contentApi";
+import { getDateLabel, getWeekday } from "../lib/dates";
+import { clearDatesListCache, readDatesListCache, writeDatesListCache } from "../lib/datesListCache";
 
 export interface DateInfo {
   date: string;
@@ -14,13 +17,18 @@ export interface UseContentLoaderReturn {
   loadingDates: Set<string>;
   errorDates: Record<string, string>;
   datesLoaded: boolean;
-  fetchDates: (preserveDate?: string) => Promise<void>;
+  fetchDates: (options?: FetchDatesOptions) => Promise<void>;
   loadContent: (date: string, forceRefresh?: boolean) => Promise<void>;
   handleRefresh: () => Promise<void>;
   handleClearCache: () => Promise<void>;
   clearingCache: boolean;
   setContentCache: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   setErrorDates: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+}
+
+export interface FetchDatesOptions {
+  preserveDate?: string;
+  forceRefresh?: boolean;
 }
 
 const CHANCE_STORAGE_KEY = "daily-why-chances";
@@ -38,20 +46,64 @@ export function useContentLoader(
   const [clearingCache, setClearingCache] = useState<boolean>(false);
 
   const currentIndexRef = useRef<number>(0);
+  const availableDatesRef = useRef<DateInfo[]>([]);
 
   useEffect(() => {
     currentIndexRef.current = currentIndex;
   }, [currentIndex]);
+
+  const clearGlobalError = useCallback(() => {
+    setErrorDates(prev => {
+      if (!prev.global) return prev;
+      const next = { ...prev };
+      delete next.global;
+      return next;
+    });
+  }, []);
+
+  const buildDateInfos = useCallback((dates: string[]): DateInfo[] => {
+    return dates.map((date) => ({
+      date,
+      label: getDateLabel(date),
+      weekday: getWeekday(date),
+    }));
+  }, []);
+
+  const applyDatesData = useCallback((dates: string[], preserveDate?: string) => {
+    if (dates.length === 0) {
+      availableDatesRef.current = [];
+      setAvailableDates([]);
+      setErrorDates({ global: "暂无可用内容" });
+      setDatesLoaded(true);
+      return;
+    }
+
+    clearGlobalError();
+
+    const dateInfos = buildDateInfos(dates);
+    availableDatesRef.current = dateInfos;
+    setAvailableDates(dateInfos);
+
+    let targetIndex = 0;
+    if (preserveDate) {
+      const idx = dateInfos.findIndex((item) => item.date === preserveDate);
+      if (idx !== -1) {
+        targetIndex = idx;
+      } else {
+        targetIndex = Math.min(currentIndexRef.current, dateInfos.length - 1);
+      }
+    }
+
+    setCurrentIndex(targetIndex);
+    setDatesLoaded(true);
+  }, [buildDateInfos, clearGlobalError, setCurrentIndex]);
 
   const loadContent = useCallback(async (date: string, forceRefresh = false) => {
     if (!forceRefresh && (contentCache[date] || loadingDates.has(date))) return;
     if (loadingDates.has(date)) return;
     setLoadingDates(prev => new Set([...prev, date]));
     try {
-      const url = forceRefresh
-        ? `/api/content?date=${date}&_refresh=1`
-        : `/api/content?date=${date}`;
-      const res = await fetch(url);
+      const res = await fetch(buildContentRequestUrl(date, forceRefresh));
       const data = await res.json();
       if (data.content) {
         setContentCache(prev => ({ ...prev, [date]: data.content }));
@@ -74,58 +126,44 @@ export function useContentLoader(
     }
   }, [contentCache, loadingDates]);
 
-  const fetchDates = useCallback(async (preserveDate?: string) => {
+  const fetchDates = useCallback(async (options: FetchDatesOptions = {}) => {
+    const { preserveDate, forceRefresh = false } = options;
+
     try {
-      const res = await fetch(`/api/content`);
+      const res = await fetch(buildDatesRequestUrl(forceRefresh));
       const data = await res.json();
       if (data.availableDates && data.availableDates.length > 0) {
-        const dateInfos: DateInfo[] = data.availableDates.map((date: string) => {
-          const [y, m, dNum] = date.split("-").map(Number);
-          const todayDate = new Date(new Date().getFullYear(), new Date().getMonth(), new Date().getDate());
-          const targetDate = new Date(y, m - 1, dNum);
-          const dayDiff = Math.round((todayDate.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
-          let label = "";
-          switch (dayDiff) {
-            case 0: label = "今天"; break;
-            case 1: label = "昨天"; break;
-            case 2: label = "前天"; break;
-            default: label = `${dayDiff}天前`;
-          }
-          const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-          return { date, label, weekday: weekdays[targetDate.getDay()] };
+        writeDatesListCache({
+          availableDates: data.availableDates,
+          today: data.today || data.availableDates[0] || null,
         });
-        setAvailableDates(dateInfos);
-
-        let targetIndex = 0;
-        if (preserveDate) {
-          const idx = dateInfos.findIndex(d => d.date === preserveDate);
-          if (idx !== -1) {
-            targetIndex = idx;
-          } else {
-            targetIndex = Math.min(currentIndexRef.current, dateInfos.length - 1);
-          }
-        }
-        setCurrentIndex(targetIndex);
-        setDatesLoaded(true);
-        const forceRefresh = !!preserveDate;
-        loadContent(dateInfos[targetIndex].date, forceRefresh);
-        if (targetIndex > 0) loadContent(dateInfos[targetIndex - 1].date);
-        if (targetIndex < dateInfos.length - 1) loadContent(dateInfos[targetIndex + 1].date);
+        applyDatesData(data.availableDates, preserveDate);
       } else {
-        setErrorDates({ "global": "暂无可用内容" });
-        setDatesLoaded(true);
+        clearDatesListCache();
+        applyDatesData([], preserveDate);
       }
     } catch {
       setErrorDates(prev => ({ ...prev, "global": "加载失败，请刷新重试" }));
       setDatesLoaded(true);
     }
-  }, [loadContent, setCurrentIndex]);
+  }, [applyDatesData]);
 
   const handleRefresh = useCallback(async () => {
     const currentDate = availableDates[currentIndex]?.date;
+    if (!currentDate) return;
+
     onClearExtraState();
-    await fetchDates(currentDate);
-  }, [fetchDates, availableDates, currentIndex, onClearExtraState]);
+    if (currentIndex === 0) {
+      await fetchDates({ forceRefresh: true });
+      const latestDate = availableDatesRef.current[0]?.date;
+      if (latestDate) {
+        await loadContent(latestDate, true);
+      }
+      return;
+    }
+
+    await loadContent(currentDate, true);
+  }, [fetchDates, loadContent, availableDates, currentIndex, onClearExtraState]);
 
   const handleClearCache = useCallback(async () => {
     setClearingCache(true);
@@ -137,10 +175,11 @@ export function useContentLoader(
         }
       }
       localStorage.removeItem(CHANCE_STORAGE_KEY);
+      clearDatesListCache();
       setContentCache({});
       setErrorDates({});
       onClearExtraState();
-      await fetchDates();
+      await fetchDates({ forceRefresh: true });
     } catch {
       // silently fail
     } finally {
@@ -148,29 +187,25 @@ export function useContentLoader(
     }
   }, [fetchDates, onClearExtraState]);
 
-  // Initial fetch
+  // Cold start: render cached dates immediately, then force refresh dates list
   useEffect(() => {
-    fetchDates();
-  }, []);
+    let cancelled = false;
 
-  // Listen for Service Worker CONTENT_UPDATED message
-  useEffect(() => {
-    if (typeof navigator === "undefined" || !navigator.serviceWorker) return;
-
-    const handler = (event: MessageEvent) => {
-      if (event.data?.type === "CONTENT_UPDATED") {
-        const isDateListUpdate = !event.data.url.includes("date=");
-        if (isDateListUpdate) {
-          handleRefresh();
-        }
+    const bootstrapDates = async () => {
+      const cached = readDatesListCache();
+      if (cached?.availableDates.length) {
+        applyDatesData(cached.availableDates);
       }
-      if (event.data?.type === "DATES_UPDATED") {
-        fetchDates();
-      }
+      if (cancelled) return;
+      await fetchDates({ forceRefresh: true });
     };
-    navigator.serviceWorker.addEventListener("message", handler);
-    return () => navigator.serviceWorker.removeEventListener("message", handler);
-  }, [handleRefresh, fetchDates]);
+
+    void bootstrapDates();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyDatesData, fetchDates]);
 
   // Prefetch adjacent when currentIndex changes
   useEffect(() => {

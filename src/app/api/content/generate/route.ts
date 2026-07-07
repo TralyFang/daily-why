@@ -32,6 +32,7 @@ function pickRandom(arr: string[], n: number): string[] {
 
 const TOPICS_HISTORY_KEY = "topics-history";
 const TOPICS_HISTORY_MAX_IN_PROMPT = 100; // Only include last 100 in AI prompt
+const MAX_GENERATE_ATTEMPTS = 7;
 
 async function getTopicsHistory(kv: unknown): Promise<string[]> {
   try {
@@ -52,6 +53,26 @@ async function appendTopicsHistory(kv: unknown, newTopics: string[]): Promise<vo
 function extractTitle(content: string): string {
   const match = content.match(/^#\s*(为什么.+？)/m);
   return match ? match[1] : "";
+}
+
+function normalizeTitle(title: string): string {
+  return title.replace(/\s+/g, " ").trim();
+}
+
+function pickRetryTopic(usedTopics: string[], attemptedTopics: Set<string>): string {
+  const availableTopics = TOPICS.filter(
+    (topic) => !usedTopics.includes(topic) && !attemptedTopics.has(topic)
+  );
+  if (availableTopics.length > 0) {
+    return pickRandom(availableTopics, 1)[0];
+  }
+
+  const untriedTopics = TOPICS.filter((topic) => !attemptedTopics.has(topic));
+  if (untriedTopics.length > 0) {
+    return pickRandom(untriedTopics, 1)[0];
+  }
+
+  return pickRandom(TOPICS, 1)[0];
 }
 
 async function generateArticle(
@@ -101,6 +122,28 @@ function validateContent(content: string): boolean {
   return true;
 }
 
+function validateGeneratedArticle(
+  content: string,
+  seenTitles: string[]
+): { valid: boolean; title: string; error?: string } {
+  if (!validateContent(content)) {
+    return { valid: false, title: "", error: "内容验证失败" };
+  }
+
+  const title = extractTitle(content);
+  if (!title) {
+    return { valid: false, title: "", error: "标题提取失败" };
+  }
+
+  const normalizedTitle = normalizeTitle(title);
+  const hasDuplicate = seenTitles.some((seenTitle) => normalizeTitle(seenTitle) === normalizedTitle);
+  if (hasDuplicate) {
+    return { valid: false, title, error: `标题重复: ${title}` };
+  }
+
+  return { valid: true, title };
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const forceRegenerate = searchParams.get("force") === "1";
@@ -144,6 +187,7 @@ export async function GET(request: Request) {
     const allKeys = [today, `${today}-extra-1`, `${today}-extra-2`, `${today}-extra-3`];
     const keys = allKeys.slice(0, articleCount);
     const results: { key: string; content: string; status: string }[] = [];
+    const resolvedTopics: string[] = [];
 
     // Load topics history for deduplication
     const historyTitles = await getTopicsHistory(kv);
@@ -152,32 +196,43 @@ export async function GET(request: Request) {
     // Generate articles
     for (let i = 0; i < articleCount; i++) {
       let content = "";
+      let title = "";
+      let currentTopic = selectedTopics[i];
       let attempts = 0;
       let lastError = "";
+      const attemptedTopics = new Set<string>();
 
-      // Combine history + newly generated titles in this batch for dedup
-      const allHistory = [...historyTitles, ...newTitles];
-
-      while (attempts < 3) {
+      while (attempts < MAX_GENERATE_ATTEMPTS) {
         attempts++;
         try {
-          content = await generateArticle(ai, selectedTopics[i], i, allHistory);
-          if (validateContent(content)) break;
-          lastError = "内容验证失败";
+          attemptedTopics.add(currentTopic);
+          const seenTitles = [...historyTitles, ...newTitles];
+          content = await generateArticle(ai, currentTopic, i, seenTitles);
+          const validation = validateGeneratedArticle(content, seenTitles);
+          if (validation.valid) {
+            title = validation.title;
+            break;
+          }
+          lastError = validation.error || "内容验证失败";
+          if (attempts < MAX_GENERATE_ATTEMPTS) {
+            currentTopic = pickRetryTopic(resolvedTopics, attemptedTopics);
+          }
         } catch (err) {
           lastError = String(err);
+          if (attempts < MAX_GENERATE_ATTEMPTS) {
+            currentTopic = pickRetryTopic(resolvedTopics, attemptedTopics);
+          }
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
 
-      if (!validateContent(content)) {
+      resolvedTopics.push(currentTopic);
+      if (!title) {
         content = `# 为什么今天的内容还没准备好？\n\n很抱歉，今天的内容生成遇到了一些技术问题。\n\n错误信息：${lastError}\n\n> 好奇心永不过期，明天再来探索新问题！`;
         results.push({ key: keys[i], content, status: `failed (${lastError})` });
       } else {
         results.push({ key: keys[i], content, status: "ok" });
-        // Extract and track the generated title
-        const title = extractTitle(content);
-        if (title) newTitles.push(title);
+        newTitles.push(title);
       }
 
       // Write to KV: 主内容 7 天，副内容 1 天
@@ -193,7 +248,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       status: "ok",
       today,
-      topics: selectedTopics,
+      topics: resolvedTopics,
       results: results.map(r => ({
         key: r.key,
         status: r.status,

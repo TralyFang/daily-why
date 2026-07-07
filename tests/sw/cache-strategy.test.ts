@@ -12,6 +12,7 @@ describe("SW API 缓存策略 — network-first", () => {
    */
   function stripCacheBuster(url: string): string {
     const u = new URL(url);
+    u.searchParams.delete("_refresh");
     u.searchParams.delete("_t");
     u.searchParams.delete("_d");
     return u.toString();
@@ -40,6 +41,12 @@ describe("SW API 缓存策略 — network-first", () => {
     const cacheKey = stripCacheBuster(url);
     expect(cacheKey).toBe("https://example.com/api/content?date=2026-06-28&type=extras");
   });
+
+  it("去除 _refresh 参数作为缓存键", () => {
+    const url = "https://example.com/api/content?_t=2026-07-06&_refresh=1";
+    const cacheKey = stripCacheBuster(url);
+    expect(cacheKey).toBe("https://example.com/api/content");
+  });
 });
 
 describe("SW 缓存行为模拟", () => {
@@ -57,6 +64,7 @@ describe("SW 缓存行为模拟", () => {
     networkFn: () => Promise<Response | null>
   ): Promise<Response> {
     const cacheUrl = new URL(requestUrl);
+    cacheUrl.searchParams.delete("_refresh");
     cacheUrl.searchParams.delete("_t");
     cacheUrl.searchParams.delete("_d");
     const cacheKey = cacheUrl.toString();
@@ -132,5 +140,38 @@ describe("SW 缓存行为模拟", () => {
 
     const data = await result.json();
     expect(data.v).toBe(1);
+  });
+
+  it("显式刷新时间列表时优先走网络并覆盖缓存", async () => {
+    cacheStore.set(
+      "https://example.com/api/content",
+      new Response(JSON.stringify({ availableDates: ["2026-06-29"] }), { status: 200 })
+    );
+
+    const result = await networkFirst(
+      "https://example.com/api/content?_t=2026-07-06&_refresh=1",
+      () => Promise.resolve(new Response(JSON.stringify({ availableDates: ["2026-07-06"] }), { status: 200 }))
+    );
+
+    const data = await result.json();
+    expect(data.availableDates).toEqual(["2026-07-06"]);
+
+    const cached = await cacheStore.get("https://example.com/api/content")?.json();
+    expect(cached.availableDates).toEqual(["2026-07-06"]);
+  });
+
+  it("显式刷新时间列表失败时回退缓存", async () => {
+    cacheStore.set(
+      "https://example.com/api/content",
+      new Response(JSON.stringify({ availableDates: ["2026-06-29"] }), { status: 200 })
+    );
+
+    const result = await networkFirst(
+      "https://example.com/api/content?_t=2026-07-06&_refresh=1",
+      () => Promise.reject(new Error("network fail"))
+    );
+
+    const data = await result.json();
+    expect(data.availableDates).toEqual(["2026-06-29"]);
   });
 });

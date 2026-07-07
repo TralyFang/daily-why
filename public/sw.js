@@ -5,6 +5,31 @@ const SW_VERSION = _RAW_VERSION.includes('__') ? `dev-${new Date().toISOString()
 const STATIC_CACHE = `daily-why-static-v${SW_VERSION}`;
 const API_CACHE = `daily-why-api-v${SW_VERSION}`;
 
+function getApiCacheKey(reqUrl) {
+  const cacheUrl = new URL(reqUrl);
+  cacheUrl.searchParams.delete('_refresh');
+  cacheUrl.searchParams.delete('_t');
+  cacheUrl.searchParams.delete('_d');
+  return cacheUrl.toString();
+}
+
+function buildOfflineJsonResponse() {
+  return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
+    status: 503,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+async function putApiCache(cacheKey, response) {
+  const cache = await caches.open(API_CACHE);
+  await cache.put(cacheKey, response.clone());
+}
+
+async function matchApiCache(cacheKey) {
+  const cache = await caches.open(API_CACHE);
+  return cache.match(cacheKey);
+}
+
 // Static assets to pre-cache on install
 const PRE_CACHE_URLS = [
   '/',
@@ -61,106 +86,63 @@ self.addEventListener('fetch', (event) => {
   if (url.pathname.startsWith('/api/content')) {
     const hasDate = url.searchParams.has('date');
     const hasRefresh = url.searchParams.has('_refresh');
+    const cacheKey = getApiCacheKey(request.url);
 
-    // Helper: normalize URL for cache key (strip _refresh, _t, _d params)
-    const getCacheKey = (reqUrl) => {
-      const cacheUrl = new URL(reqUrl);
-      cacheUrl.searchParams.delete('_refresh');
-      cacheUrl.searchParams.delete('_t');
-      cacheUrl.searchParams.delete('_d');
-      return cacheUrl.toString();
-    };
-
-    if (hasDate && hasRefresh) {
-      // Force refresh: network-only, then update cache
+    if (hasRefresh) {
+      // Explicit refresh: go to network first, then overwrite normalized cache
       event.respondWith(
         fetch(request).then(async (response) => {
           if (response.ok) {
-            const cache = await caches.open(API_CACHE);
-            cache.put(getCacheKey(request.url), response.clone());
+            await putApiCache(cacheKey, response);
           }
           return response;
         }).catch(async () => {
-          // Network failed — try cache as last resort
-          const cache = await caches.open(API_CACHE);
-          const cached = await cache.match(getCacheKey(request.url));
+          const cached = await matchApiCache(cacheKey);
           if (cached) return cached;
-          return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
-            status: 503,
-            headers: { 'Content-Type': 'application/json' },
-          });
+          return buildOfflineJsonResponse();
         })
       );
       return;
     }
 
-    if (hasDate && !hasRefresh) {
+    if (hasDate) {
       // Normal content load: cache-first, miss goes to network
       event.respondWith(
         (async () => {
-          const cache = await caches.open(API_CACHE);
-          const cacheKey = getCacheKey(request.url);
-          const cached = await cache.match(cacheKey);
+          const cached = await matchApiCache(cacheKey);
           if (cached) return cached;
 
           // Cache miss — fetch from network
           try {
             const response = await fetch(request);
             if (response.ok) {
-              cache.put(cacheKey, response.clone());
+              await putApiCache(cacheKey, response);
             }
             return response;
           } catch {
-            return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
-              status: 503,
-              headers: { 'Content-Type': 'application/json' },
-            });
+            return buildOfflineJsonResponse();
           }
         })()
       );
       return;
     }
 
-    // Date list (no date param): stale-while-revalidate
-    // Return cache immediately if available, fetch in background and notify client if changed
+    // Date list (no date param): network-first, fallback to cache
     event.respondWith(
       (async () => {
-        const cache = await caches.open(API_CACHE);
-        const cacheKey = getCacheKey(request.url);
-        const cached = await cache.match(cacheKey);
-
-        // Background revalidation — fetch network and update cache
-        const revalidate = fetch(request).then(async (response) => {
+        try {
+          const response = await fetch(request);
           if (response.ok) {
-            if (cached) {
-              const newBody = await response.clone().text();
-              const oldBody = await cached.clone().text();
-              if (newBody !== oldBody) {
-                // Date list changed — notify all clients
-                const clients = await self.clients.matchAll({ type: 'window' });
-                clients.forEach((client) => {
-                  client.postMessage({ type: 'DATES_UPDATED' });
-                });
-              }
-            }
-            cache.put(cacheKey, response.clone());
+            await putApiCache(cacheKey, response);
           }
           return response;
-        }).catch(() => null);
-
-        if (cached) {
-          // Return stale cache immediately, revalidate in background
-          event.waitUntil(revalidate);
-          return cached;
+        } catch {
+          const cached = await matchApiCache(cacheKey);
+          if (cached) {
+            return cached;
+          }
+          return buildOfflineJsonResponse();
         }
-
-        // No cache — wait for network
-        const response = await revalidate;
-        if (response) return response;
-        return new Response(JSON.stringify({ error: '离线状态，暂无缓存内容' }), {
-          status: 503,
-          headers: { 'Content-Type': 'application/json' },
-        });
       })()
     );
     return;
