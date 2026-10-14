@@ -1,5 +1,10 @@
 import { isGenerationFailureContent } from "./contentFailure";
 import { pickQuestions, normalizeTitle, type BankQuestion } from "./questionBank";
+import {
+  appendGenerationMeta,
+  estimateNeurons,
+  extractAiUsage,
+} from "./generationMeta";
 
 export const KV_TTL_SECONDS = 7 * 24 * 60 * 60;
 export const TOPICS_HISTORY_KEY = "topics-history";
@@ -214,6 +219,11 @@ export async function generateArticleForQuestion(
   question: BankQuestion
 ): Promise<{ content: string; model: string } | { error: string }> {
   let lastError = "生成失败";
+  let attempts = 0;
+  let promptTokens = 0;
+  let completionTokens = 0;
+  let neurons = 0;
+  let hasNeuronEstimate = false;
 
   for (const model of AI_MODELS) {
     for (let attempt = 0; attempt < MAX_ATTEMPTS_PER_MODEL; attempt++) {
@@ -229,11 +239,30 @@ export async function generateArticleForQuestion(
           reasoning_effort: "low",
         });
 
+        attempts += 1;
+        const usage = extractAiUsage(response);
+        promptTokens += usage.promptTokens;
+        completionTokens += usage.completionTokens;
+        const neuronCost = estimateNeurons(model, usage);
+        if (neuronCost != null) {
+          neurons += neuronCost;
+          hasNeuronEstimate = true;
+        }
+
         let content = stripModelArtifacts(extractAiText(response));
         content = enforceTitle(content, question.title);
         const validation = validateArticle(content, question.title);
         if (validation.valid) {
-          return { content, model };
+          return {
+            content: appendGenerationMeta(content, {
+              model,
+              promptTokens,
+              completionTokens,
+              neurons: hasNeuronEstimate ? neurons : null,
+              attempts,
+            }),
+            model,
+          };
         }
         lastError = validation.error || "内容验证失败";
       } catch (err) {

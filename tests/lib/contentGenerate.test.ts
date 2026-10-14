@@ -9,6 +9,13 @@ import {
   stripModelArtifacts,
   validateArticle,
 } from "@/lib/contentGenerate";
+import {
+  appendGenerationMeta,
+  estimateNeurons,
+  extractAiUsage,
+  formatGenerationMeta,
+  splitGenerationMeta,
+} from "@/lib/generationMeta";
 
 const GOOD_ARTICLE = `# 为什么天空是蓝色的？
 
@@ -62,5 +69,28 @@ describe("contentGenerate helpers", () => {
     expect(extractAiText({ response: GOOD_ARTICLE })).toBe(GOOD_ARTICLE);
     expect(extractAiText({ choices: [{ message: { content: GOOD_ARTICLE } }] })).toBe(GOOD_ARTICLE);
     expect(extractTitle(GOOD_ARTICLE)).toBe("为什么天空是蓝色的？");
+  });
+
+  it("能解析用量并估算 Neurons，页脚不进入正文", () => {
+    const usage = extractAiUsage({
+      response: GOOD_ARTICLE,
+      usage: { prompt_tokens: 800, completion_tokens: 1000 },
+    });
+    expect(usage).toEqual({ promptTokens: 800, completionTokens: 1000 });
+    expect(estimateNeurons("@cf/qwen/qwen3.8-27b", usage)).toBe(324);
+
+    const withMeta = appendGenerationMeta(GOOD_ARTICLE, {
+      model: "@cf/qwen/qwen3.8-27b",
+      promptTokens: 800,
+      completionTokens: 1000,
+      neurons: 324,
+      attempts: 2,
+    });
+    const split = splitGenerationMeta(withMeta);
+    expect(split.body).toBe(GOOD_ARTICLE);
+    expect(split.meta?.model).toBe("@cf/qwen/qwen3.8-27b");
+    expect(formatGenerationMeta(split.meta!)).toBe(
+      "Qwen 3.8 27B · 输入 800 · 输出 1,000 · 约 324 Neurons · 2 次调用"
+    );
   });
 });

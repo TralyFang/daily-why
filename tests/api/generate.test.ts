@@ -44,7 +44,10 @@ describe("/api/content/generate GET", () => {
     vi.setSystemTime(new Date("2026-06-29T02:00:00Z"));
     Object.keys(mockKV).forEach((k) => delete mockKV[k]);
     mockAIRun.mockReset();
-    mockAIRun.mockResolvedValue({ response: DEFAULT_ARTICLE });
+    mockAIRun.mockResolvedValue({
+      response: DEFAULT_ARTICLE,
+      usage: { prompt_tokens: 800, completion_tokens: 1000 },
+    });
   });
 
   afterEach(() => {
@@ -65,6 +68,8 @@ describe("/api/content/generate GET", () => {
     expect(data.results[0].key).toBe("2026-06-29");
     expect(mockKV["2026-06-29"]).toContain("# 为什么");
     expect(mockKV["2026-06-29"]).not.toContain("为什么今天的内容还没准备好");
+    expect(mockKV["2026-06-29"]).toContain("<!--daily-why-ai-meta:");
+    expect(mockKV["2026-06-29"]).toContain("@cf/qwen/qwen3.8-27b");
   });
 
   it("all=1 时当天生成 4 篇文章（1主+3extra）", async () => {

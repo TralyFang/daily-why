@@ -129,6 +129,10 @@
     @apply rounded-xl max-w-full my-4;
   }
 
+  .markdown-content .ai-generation-meta {
+    @apply mt-6 mb-0 text-[11px] leading-relaxed text-gray-400 font-normal not-italic;
+  }
+
   /* Empty state */
   .empty-state {
     @apply flex flex-col items-center justify-center py-16 text-center;
