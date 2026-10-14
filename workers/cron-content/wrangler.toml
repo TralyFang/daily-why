@@ -2,9 +2,10 @@ name = "daily-why-cron-content"
 main = "worker.js"
 compatibility_date = "2026-06-20"
 
-# Run at 00:05 Beijing time (UTC 16:05 previous day)
+# Run at 00:05 and 00:30 Beijing time (UTC 16:05 / 16:30 previous day)
+# 00:30 is a retry pass: existing good content is skipped, missing/failure is regenerated
 [triggers]
-crons = ["5 16 * * *"]
+crons = ["5 16 * * *", "30 16 * * *"]
 
 # Service binding to the main daily-why worker
 [[services]]

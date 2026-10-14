@@ -139,8 +139,20 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
     try {
       const res = await fetch(`/api/content?date=${extraKey}`);
       const data = await res.json();
-      if (data.content) {
-        setExtraContent(data.content);
+      let content = data.content as string | undefined;
+
+      if (!content || isGenerationFailureContent(content)) {
+        const generateRes = await fetch(`/api/content/generate?date=${todayDate}&slot=extra-${nextSlot}`);
+        if (!generateRes.ok) {
+          throw new Error("生成失败");
+        }
+        const contentRes = await fetch(`/api/content?date=${extraKey}&_refresh=1`);
+        const generated = await contentRes.json();
+        content = generated.content;
+      }
+
+      if (content && !isGenerationFailureContent(content)) {
+        setExtraContent(content);
         setCurrentExtraKey(extraKey);
         setShowExtraCard(true);
         const newState = { date: chanceState.date, used: nextSlot };
