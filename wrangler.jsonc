@@ -26,6 +26,9 @@
 			"preview_id": "de18acc52fdb45b0ab999e9ac3793ba6"
 		}
 	],
+	"vars": {
+		"CLOUDFLARE_ACCOUNT_ID": "a1fed8f24f3add259973772980ef1e63"
+	},
 	"ai": {
 		"binding": "AI",
 		"remote": true

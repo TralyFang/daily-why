@@ -23,6 +23,7 @@ const MODEL_DISPLAY_NAMES: Record<string, string> = {
 const NEURON_RATES: Record<string, { input: number; output: number }> = {
   "@cf/qwen/qwen3.8-27b": { input: 40909, output: 290909 },
   "@cf/zai-org/glm-4.7-flash": { input: 5500, output: 36400 },
+  "@cf/meta/llama-4-scout-17b-16e-instruct": { input: 24545, output: 77273 },
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {

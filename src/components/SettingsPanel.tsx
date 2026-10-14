@@ -1,10 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
+
 interface SettingsPanelProps {
   showSettings: boolean;
   clearingCache: boolean;
   handleClearCache: () => void;
   onClose: () => void;
+}
+
+interface AiUsageView {
+  line: string;
+  percent: number;
 }
 
 export default function SettingsPanel({
@@ -13,6 +20,34 @@ export default function SettingsPanel({
   handleClearCache,
   onClose,
 }: SettingsPanelProps) {
+  const [aiUsage, setAiUsage] = useState<AiUsageView | null>(null);
+
+  useEffect(() => {
+    if (!showSettings) return;
+
+    let cancelled = false;
+    setAiUsage(null);
+
+    fetch("/api/ai-usage")
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (typeof data.line === "string") {
+          setAiUsage({
+            line: data.line,
+            percent: Math.min(100, Math.max(0, Number(data.percent) || 0)),
+          });
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setAiUsage(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showSettings]);
+
   if (!showSettings) return null;
 
   return (
@@ -33,6 +68,22 @@ export default function SettingsPanel({
 
         {/* Content */}
         <div className="px-6 pb-6">
+          {/* 今日模型用量 */}
+          <div className="bg-gray-50 rounded-xl px-4 py-4 mb-4">
+            <span className="text-sm text-gray-700 font-medium">今日模型用量</span>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {aiUsage ? aiUsage.line : "今天使用的神经元：加载中..."}
+            </p>
+            <div className="mt-3 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-300 ${
+                  (aiUsage?.percent || 0) >= 90 ? "bg-red-400" : "bg-brand-500"
+                }`}
+                style={{ width: `${aiUsage?.percent || 0}%` }}
+              />
+            </div>
+          </div>
+
           {/* Clear cache */}
           <div className="bg-gray-50 rounded-xl px-4 py-4 mb-4">
             <div className="flex items-center justify-between">

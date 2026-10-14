@@ -4,6 +4,8 @@ import type { KVNamespace } from "@cloudflare/workers-types";
 declare global {
   interface CloudflareEnv {
     CONTENT_KV: KVNamespace;
+    CLOUDFLARE_ACCOUNT_ID?: string;
+    CLOUDFLARE_API_TOKEN?: string;
   }
 }
 
