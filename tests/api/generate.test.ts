@@ -1,6 +1,6 @@
 /**
  * /api/content/generate API 路由逻辑测试
- * 测试日期参数、强制重新生成、默认只生成主内容、失败不写 KV
+ * 测试日期参数、强制重新生成、当天默认 1 主 + 3 extra、失败不写 KV
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { buildGenerationFailureContent } from "@/lib/contentFailure";
@@ -54,7 +54,7 @@ describe("/api/content/generate GET", () => {
     vi.useRealTimers();
   });
 
-  it("当天默认只生成 1 篇主内容", async () => {
+  it("当天默认生成 4 篇文章（1主+3extra）", async () => {
     const req = new Request(
       "http://localhost/api/content/generate?force=1&date=2026-06-29"
     );
@@ -64,17 +64,24 @@ describe("/api/content/generate GET", () => {
     expect(res.status).toBe(200);
     expect(data.status).toBe("ok");
     expect(data.today).toBe("2026-06-29");
-    expect(data.results).toHaveLength(1);
-    expect(data.results[0].key).toBe("2026-06-29");
+    expect(data.results).toHaveLength(4);
+    expect(data.results.map((item: { key: string }) => item.key)).toEqual([
+      "2026-06-29",
+      "2026-06-29-extra-1",
+      "2026-06-29-extra-2",
+      "2026-06-29-extra-3",
+    ]);
     expect(mockKV["2026-06-29"]).toContain("# 为什么");
     expect(mockKV["2026-06-29"]).not.toContain("为什么今天的内容还没准备好");
     expect(mockKV["2026-06-29"]).toContain("<!--daily-why-ai-meta:");
     expect(mockKV["2026-06-29"]).toContain("@cf/qwen/qwen3.8-27b");
+    expect(mockKV["2026-06-29-extra-1"]).toContain("# 为什么");
+    expect(mockKV["2026-06-29-extra-3"]).toContain("# 为什么");
   });
 
-  it("all=1 时当天生成 4 篇文章（1主+3extra）", async () => {
+  it("all=1 时非当天也可生成 4 篇文章", async () => {
     const req = new Request(
-      "http://localhost/api/content/generate?force=1&all=1&date=2026-06-29"
+      "http://localhost/api/content/generate?force=1&all=1&date=2026-06-28"
     );
     const res = await GET(req);
     const data = await res.json();
@@ -83,10 +90,10 @@ describe("/api/content/generate GET", () => {
     expect(data.status).toBe("ok");
     expect(data.results).toHaveLength(4);
     expect(data.results.map((item: { key: string }) => item.key)).toEqual([
-      "2026-06-29",
-      "2026-06-29-extra-1",
-      "2026-06-29-extra-2",
-      "2026-06-29-extra-3",
+      "2026-06-28",
+      "2026-06-28-extra-1",
+      "2026-06-28-extra-2",
+      "2026-06-28-extra-3",
     ]);
   });
 
@@ -104,7 +111,7 @@ describe("/api/content/generate GET", () => {
     expect(data.results[0].key).toBe("2026-06-28");
   });
 
-  it("无效日期格式回退到今天（默认生成1篇）", async () => {
+  it("无效日期格式回退到今天（默认生成4篇）", async () => {
     const req = new Request(
       "http://localhost/api/content/generate?force=1&date=invalid"
     );
@@ -113,7 +120,7 @@ describe("/api/content/generate GET", () => {
 
     expect(res.status).toBe(200);
     expect(data.today).toBe("2026-06-29");
-    expect(data.results).toHaveLength(1);
+    expect(data.results).toHaveLength(4);
   });
 
   it("已有合格内容且不 force 时跳过", async () => {

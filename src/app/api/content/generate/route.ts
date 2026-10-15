@@ -20,7 +20,7 @@ export async function GET(request: Request) {
   const forceRegenerate = searchParams.get("force") === "1";
   const dateParam = searchParams.get("date"); // 支持指定日期，如 ?date=2026-06-28
   const slotParam = searchParams.get("slot");
-  const generateAll = searchParams.get("all") === "1";
+  const generateAll = searchParams.get("all") === "1"; // 非当天如需 4 篇可显式加 ?all=1
 
   try {
     const ctx = await getCloudflareContext({ async: true });
@@ -46,8 +46,9 @@ export async function GET(request: Request) {
       );
     }
 
-    // 默认只生成主内容；当天如需 4 篇加 ?all=1
-    const targets = buildGenerationTargets(today, requestedSlot, generateAll);
+    // 当天默认 1 主 + 3 extra；非当天只生成主内容；?all=1 可强制 4 篇
+    const isToday = today === getToday();
+    const targets = buildGenerationTargets(today, requestedSlot, isToday || generateAll);
     const firstExisting = await kv.get(targets[0].key, { type: "text" });
     if (targets.length === 1 && shouldSkipExisting(firstExisting, forceRegenerate)) {
       return NextResponse.json({

@@ -32,11 +32,16 @@ const GOOD_ARTICLE = `# 为什么天空是蓝色的？
 *参考资料：《费曼物理学讲义》第一卷·光学*`;
 
 describe("contentGenerate helpers", () => {
-  it("默认只生成主内容，all=1 才生成 4 篇", () => {
+  it("当天生成 4 篇，非当天只生成主内容，指定 slot 只生成该篇", () => {
+    expect(buildGenerationTargets("2026-10-14", null, true)).toEqual([
+      { key: "2026-10-14", ttl: 7 * 24 * 60 * 60, slot: "main" },
+      { key: "2026-10-14-extra-1", ttl: 7 * 24 * 60 * 60, slot: "extra-1" },
+      { key: "2026-10-14-extra-2", ttl: 7 * 24 * 60 * 60, slot: "extra-2" },
+      { key: "2026-10-14-extra-3", ttl: 7 * 24 * 60 * 60, slot: "extra-3" },
+    ]);
     expect(buildGenerationTargets("2026-10-14", null, false)).toEqual([
       { key: "2026-10-14", ttl: 7 * 24 * 60 * 60, slot: "main" },
     ]);
-    expect(buildGenerationTargets("2026-10-14", null, true)).toHaveLength(4);
     expect(buildGenerationTargets("2026-10-14", "extra-2", false)).toEqual([
       { key: "2026-10-14-extra-2", ttl: 7 * 24 * 60 * 60, slot: "extra-2" },
     ]);

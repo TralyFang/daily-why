@@ -44,7 +44,7 @@ export function parseGenerationSlot(slotParam: string | null): GenerationSlot | 
 export function buildGenerationTargets(
   date: string,
   slot: GenerationSlot | null,
-  generateAll: boolean
+  includeExtras: boolean
 ): GenerationTarget[] {
   if (slot === "main") {
     return [{ key: date, ttl: KV_TTL_SECONDS, slot }];
@@ -54,16 +54,17 @@ export function buildGenerationTargets(
     return [{ key: `${date}-${slot}`, ttl: KV_TTL_SECONDS, slot }];
   }
 
-  if (generateAll) {
-    return [
-      { key: date, ttl: KV_TTL_SECONDS, slot: "main" },
-      { key: `${date}-extra-1`, ttl: KV_TTL_SECONDS, slot: "extra-1" },
-      { key: `${date}-extra-2`, ttl: KV_TTL_SECONDS, slot: "extra-2" },
-      { key: `${date}-extra-3`, ttl: KV_TTL_SECONDS, slot: "extra-3" },
-    ];
+  // 当天默认 1 主 + 3 extra；非当天只生成主内容
+  if (!includeExtras) {
+    return [{ key: date, ttl: KV_TTL_SECONDS, slot: "main" }];
   }
 
-  return [{ key: date, ttl: KV_TTL_SECONDS, slot: "main" }];
+  return [
+    { key: date, ttl: KV_TTL_SECONDS, slot: "main" },
+    { key: `${date}-extra-1`, ttl: KV_TTL_SECONDS, slot: "extra-1" },
+    { key: `${date}-extra-2`, ttl: KV_TTL_SECONDS, slot: "extra-2" },
+    { key: `${date}-extra-3`, ttl: KV_TTL_SECONDS, slot: "extra-3" },
+  ];
 }
 
 export function extractTitle(content: string): string {

@@ -2,7 +2,8 @@
  * Cloudflare Cron Worker — Daily content generation trigger.
  *
  * Runs at 00:05 Beijing time (UTC 16:05 previous day) via cron trigger.
- * Calls the main daily-why worker's /api/content/generate via service binding.
+ * Calls the main daily-why worker's /api/content/generate?all=1 via service binding
+ * so today always gets 1 main + 3 extra articles.
  *
  * All content generation logic lives in the main worker — this is just a trigger.
  *
@@ -13,7 +14,7 @@ export default {
   async scheduled(event, env, ctx) {
     try {
       const response = await env.MAIN_APP.fetch(
-        new Request("https://internal/api/content/generate")
+        new Request("https://internal/api/content/generate?all=1")
       );
       const result = await response.json();
       console.log(
@@ -39,7 +40,7 @@ export default {
     if (url.pathname === "/generate") {
       try {
         const response = await env.MAIN_APP.fetch(
-          new Request("https://internal/api/content/generate?force=1")
+          new Request("https://internal/api/content/generate?force=1&all=1")
         );
         const result = await response.json();
         return new Response(JSON.stringify(result), {

@@ -141,6 +141,7 @@ export default function ExtraContent({ todayDate }: ExtraContentProps) {
       const data = await res.json();
       let content = data.content as string | undefined;
 
+      // extra 由 Cron 预生成；这里只在 KV 缺失或失败占位文时补生成
       if (!content || isGenerationFailureContent(content)) {
         const generateRes = await fetch(`/api/content/generate?date=${todayDate}&slot=extra-${nextSlot}`);
         if (!generateRes.ok) {
